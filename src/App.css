@@ -1,5 +1,7 @@
 .app-shell {
   display: grid;
+  min-height: 100svh;
+  grid-template-rows: auto 1fr;
   gap: 20px;
   padding: 18px;
 }
@@ -121,6 +123,7 @@ textarea:focus-visible {
 .workspace {
   display: grid;
   gap: 20px;
+  min-height: 0;
 }
 
 .workspace-wide {
@@ -132,10 +135,15 @@ textarea:focus-visible {
 }
 
 .editor-column,
-.map-column {
+.map-column,
+.details-column {
   display: grid;
   gap: 20px;
   align-content: start;
+}
+
+.map-column {
+  min-height: 0;
 }
 
 .panel {
@@ -217,12 +225,14 @@ textarea:focus-visible {
 }
 
 .map-wrapper {
-  min-height: 560px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: max(560px, calc(100svh - 220px));
 }
 
 .map-panel,
 .map-canvas {
-  min-height: 460px;
+  min-height: 0;
   height: 100%;
   border-radius: 20px;
 }
@@ -256,6 +266,7 @@ textarea:focus-visible {
 
 .route-table-shell {
   overflow: auto;
+  max-height: calc(100svh - 260px);
   border: 1px solid var(--border);
   border-radius: 18px;
   background: var(--surface-muted);
@@ -484,6 +495,30 @@ textarea:focus-visible {
   box-shadow: 0 2px 8px rgba(20, 24, 39, 0.18);
 }
 
+@media (min-width: 1680px) {
+  .workspace-wide {
+    grid-template-columns: minmax(300px, 0.55fr) minmax(500px, 1.4fr) minmax(300px, 0.75fr);
+  }
+
+  .workspace-wide .map-column {
+    display: contents;
+  }
+
+  .workspace-wide .map-wrapper {
+    align-self: stretch;
+    grid-template-rows: auto 1fr;
+  }
+
+  .workspace-wide .map-wrapper .map-panel {
+    height: auto;
+    min-height: 0;
+  }
+
+  .workspace-wide .route-table-shell {
+    max-height: calc(100svh - 220px);
+  }
+}
+
 @media (max-width: 1080px) {
   .hero-panel,
   .control-bar,
@@ -521,11 +556,15 @@ textarea:focus-visible {
   }
 
   .map-wrapper {
-    min-height: 420px;
+    min-height: max(420px, calc(100svh - 180px));
   }
 
   .map-panel,
   .map-canvas {
-    min-height: 320px;
+    min-height: 0;
+  }
+
+  .route-table-shell {
+    max-height: calc(100svh - 240px);
   }
 }

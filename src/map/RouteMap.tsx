@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CircleMarker, MapContainer, Marker, Polygon, Polyline, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
-import { LatLngBounds, divIcon } from 'leaflet'
+import { CircleMarker as LeafletCircleMarker, LatLngBounds, divIcon } from 'leaflet'
 import type { ParseIssue, Waypoint } from '../editor/editorTypes'
 import { exportWaypointLine } from '../wpt/exportWpt'
 
@@ -17,6 +17,14 @@ type RouteMapProps = {
   onSetAltLabels: (waypointId: string, altLabels: string[]) => void
   onToggleWaypointKind: (waypointId: string) => void
   onDeleteWaypoint: (waypointId: string) => void
+  onMoveWaypointPosition: (waypointId: string, lat: number, lon: number) => void
+  onSelectWaypoint: (waypointId: string) => void
+}
+
+type DraggingWaypoint = {
+  waypointId: string
+  lat: number
+  lon: number
 }
 
 const warningIcon = divIcon({
@@ -159,7 +167,17 @@ function SyncMapSize() {
   return null
 }
 
-function MapInsertionHandler({ onInsertWaypoint }: Pick<RouteMapProps, 'onInsertWaypoint'>) {
+function MapInsertionHandler({
+  onInsertWaypoint,
+  onInsertStationAndEdit,
+  isDraggingWaypoint,
+  suppressExternalClickUntil,
+}: {
+  onInsertWaypoint: RouteMapProps['onInsertWaypoint']
+  onInsertStationAndEdit: (lat: number, lon: number) => void
+  isDraggingWaypoint: boolean
+  suppressExternalClickUntil: number
+}) {
   const map = useMap()
   const clickTimer = useRef<number | null>(null)
   const suppressClickUntil = useRef(0)
@@ -173,7 +191,16 @@ function MapInsertionHandler({ onInsertWaypoint }: Pick<RouteMapProps, 'onInsert
       popupOpen.current = false
     },
     click(event) {
-      if (event.originalEvent.detail > 1 || performance.now() < suppressClickUntil.current) {
+      if (
+        isDraggingWaypoint ||
+        event.originalEvent.detail > 1 ||
+        performance.now() < Math.max(suppressClickUntil.current, suppressExternalClickUntil)
+      ) {
+        return
+      }
+
+      const target = event.originalEvent.target as Element | null
+      if (target?.closest('.leaflet-popup')) {
         return
       }
 
@@ -198,6 +225,10 @@ function MapInsertionHandler({ onInsertWaypoint }: Pick<RouteMapProps, 'onInsert
       }, 220)
     },
     dblclick(event) {
+      if (isDraggingWaypoint) {
+        return
+      }
+
       suppressClickUntil.current = performance.now() + 300
 
       if (clickTimer.current !== null) {
@@ -211,7 +242,7 @@ function MapInsertionHandler({ onInsertWaypoint }: Pick<RouteMapProps, 'onInsert
         return
       }
 
-      onInsertWaypoint(false, event.latlng.lat, event.latlng.lng)
+      onInsertStationAndEdit(event.latlng.lat, event.latlng.lng)
     },
   })
 
@@ -227,20 +258,72 @@ function MapInsertionHandler({ onInsertWaypoint }: Pick<RouteMapProps, 'onInsert
   return null
 }
 
+function WaypointDragHandler({
+  draggingWaypoint,
+  onPreviewWaypoint,
+  onCommitWaypoint,
+}: {
+  draggingWaypoint: DraggingWaypoint | null
+  onPreviewWaypoint: (lat: number, lon: number) => void
+  onCommitWaypoint: (lat: number, lon: number) => void
+}) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!draggingWaypoint) {
+      map.dragging.enable()
+      map.doubleClickZoom.enable()
+      return
+    }
+
+    map.dragging.disable()
+    map.doubleClickZoom.disable()
+
+    return () => {
+      map.dragging.enable()
+      map.doubleClickZoom.enable()
+    }
+  }, [draggingWaypoint, map])
+
+  useMapEvents({
+    mousemove(event) {
+      if (!draggingWaypoint) {
+        return
+      }
+
+      onPreviewWaypoint(event.latlng.lat, event.latlng.lng)
+    },
+    mouseup(event) {
+      if (!draggingWaypoint) {
+        return
+      }
+
+      onCommitWaypoint(event.latlng.lat, event.latlng.lng)
+    },
+  })
+
+  return null
+}
+
 function WaypointPopupContent({
   waypoint,
   onRenameWaypoint,
   onSetAltLabels,
   onToggleWaypointKind,
   onDeleteWaypoint,
+  onPopupInteractionStart,
   issueCodes,
 }: Pick<RouteMapProps, 'onRenameWaypoint' | 'onSetAltLabels' | 'onToggleWaypointKind' | 'onDeleteWaypoint'> & {
   waypoint: Waypoint
+  onPopupInteractionStart: () => void
   issueCodes: string[]
 }) {
+  const map = useMap()
+  const stationInputRef = useRef<HTMLInputElement | null>(null)
   const [draftLabel, setDraftLabel] = useState(waypoint.label)
   const [draftAltLabels, setDraftAltLabels] = useState(waypoint.altLabels.join(' '))
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
+  const [pendingStationFocus, setPendingStationFocus] = useState(false)
 
   const waypointLine = useMemo(() => exportWaypointLine(waypoint), [waypoint])
 
@@ -255,6 +338,16 @@ function WaypointPopupContent({
   useEffect(() => {
     setCopyStatus('idle')
   }, [waypointLine])
+
+  useEffect(() => {
+    if (!pendingStationFocus || waypoint.hidden) {
+      return
+    }
+
+    stationInputRef.current?.focus()
+    stationInputRef.current?.select()
+    setPendingStationFocus(false)
+  }, [pendingStationFocus, waypoint.hidden])
 
   useEffect(() => {
     const nextLabel = draftLabel.trim()
@@ -299,9 +392,25 @@ function WaypointPopupContent({
     event.stopPropagation()
   }
 
+  function handlePopupInteractionStart() {
+    onPopupInteractionStart()
+  }
+
+  function handleInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    map.closePopup()
+  }
+
   return (
     <div
       className="waypoint-popup"
+      onMouseDownCapture={handlePopupInteractionStart}
+      onTouchStartCapture={handlePopupInteractionStart}
       onClick={stopEventPropagation}
       onDoubleClick={stopEventPropagation}
       onMouseDown={stopEventPropagation}
@@ -309,10 +418,14 @@ function WaypointPopupContent({
       <div className="waypoint-popup-subheader">{waypoint.hidden ? 'Geometry node' : 'Station'}</div>
       <div className="waypoint-popup-title-row">
         <input
+          ref={stationInputRef}
           className="waypoint-popup-title-input"
           type="text"
           value={draftLabel}
+          autoFocus
           onChange={(event) => setDraftLabel(event.target.value)}
+          onFocus={(event) => event.currentTarget.select()}
+          onKeyDown={handleInputKeyDown}
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
         />
@@ -326,6 +439,7 @@ function WaypointPopupContent({
           value={draftAltLabels}
           placeholder="Alt labels separated by spaces"
           onChange={(event) => setDraftAltLabels(event.target.value)}
+          onKeyDown={handleInputKeyDown}
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
         />
@@ -336,7 +450,12 @@ function WaypointPopupContent({
           type="button"
           className="waypoint-copy-button waypoint-convert-button"
           onMouseDown={stopEventPropagation}
-          onClick={() => onToggleWaypointKind(waypoint.id)}
+          onClick={() => {
+            if (waypoint.hidden) {
+              setPendingStationFocus(true)
+            }
+            onToggleWaypointKind(waypoint.id)
+          }}
         >
           {waypoint.hidden ? 'Convert to Station' : 'Convert to Geometry Node'}
         </button>
@@ -379,10 +498,82 @@ export function RouteMap({
   onSetAltLabels,
   onToggleWaypointKind,
   onDeleteWaypoint,
+  onMoveWaypointPosition,
+  onSelectWaypoint,
 }: RouteMapProps) {
+  const [draggingWaypoint, setDraggingWaypoint] = useState<DraggingWaypoint | null>(null)
+  const [suppressExternalClickUntil, setSuppressExternalClickUntil] = useState(0)
+  const [pendingPopupWaypointId, setPendingPopupWaypointId] = useState<string | null>(null)
+  const markerRefs = useRef(new Map<string, LeafletCircleMarker>())
+  const pendingInsertedStationWaypointIds = useRef<Set<string> | null>(null)
+
+  function handleInsertStationAndEdit(lat: number, lon: number) {
+    pendingInsertedStationWaypointIds.current = new Set(waypoints.map((waypoint) => waypoint.id))
+    onInsertWaypoint(false, lat, lon)
+  }
+
+  function handlePopupInteractionStart() {
+    setSuppressExternalClickUntil(performance.now() + 500)
+  }
+
+  useEffect(() => {
+    if (!pendingInsertedStationWaypointIds.current) {
+      return
+    }
+
+    const insertedWaypoint = waypoints.find(
+      (waypoint) =>
+        !pendingInsertedStationWaypointIds.current?.has(waypoint.id) &&
+        waypoint.hidden === false,
+    )
+
+    if (!insertedWaypoint) {
+      return
+    }
+
+    pendingInsertedStationWaypointIds.current = null
+    onSelectWaypoint(insertedWaypoint.id)
+    setPendingPopupWaypointId(insertedWaypoint.id)
+  }, [onSelectWaypoint, waypoints])
+
+  useEffect(() => {
+    if (!pendingPopupWaypointId) {
+      return
+    }
+
+    const marker = markerRefs.current.get(pendingPopupWaypointId)
+    if (!marker) {
+      return
+    }
+
+    marker.openPopup()
+    setPendingPopupWaypointId(null)
+  }, [pendingPopupWaypointId, waypoints])
+
   const positions = useMemo(
-    () => waypoints.map((waypoint) => [waypoint.lat, waypoint.lon] as [number, number]),
-    [waypoints],
+    () =>
+      waypoints.map((waypoint) => {
+        if (draggingWaypoint?.waypointId === waypoint.id) {
+          return [draggingWaypoint.lat, draggingWaypoint.lon] as [number, number]
+        }
+
+        return [waypoint.lat, waypoint.lon] as [number, number]
+      }),
+    [draggingWaypoint, waypoints],
+  )
+
+  const renderedWaypoints = useMemo(
+    () =>
+      waypoints.map((waypoint) =>
+        draggingWaypoint?.waypointId === waypoint.id
+          ? {
+              ...waypoint,
+              lat: draggingWaypoint.lat,
+              lon: draggingWaypoint.lon,
+            }
+          : waypoint,
+      ),
+    [draggingWaypoint, waypoints],
   )
 
   const inUseLabelSet = useMemo(() => new Set(inUseLabels), [inUseLabels])
@@ -401,8 +592,8 @@ export function RouteMap({
   }, [issues])
   const thicknessMultiplier = lineWeight / 4
   const highlightLines = useMemo(
-    () => calcHighlightLines(waypoints, 20 * thicknessMultiplier),
-    [thicknessMultiplier, waypoints],
+    () => calcHighlightLines(renderedWaypoints, 20 * thicknessMultiplier),
+    [renderedWaypoints, thicknessMultiplier],
   )
   const corridorPolygon = useMemo(
     () => [...highlightLines.hi, ...[...highlightLines.lo].reverse()],
@@ -419,7 +610,35 @@ export function RouteMap({
         <SyncMapSize />
         <FitToRoute fitRequest={fitRequest} waypoints={waypoints} />
         <FocusWaypoint focusWaypointId={focusWaypointId} focusRequest={focusRequest} waypoints={waypoints} />
-        <MapInsertionHandler onInsertWaypoint={onInsertWaypoint} />
+        <MapInsertionHandler
+          onInsertWaypoint={onInsertWaypoint}
+          onInsertStationAndEdit={handleInsertStationAndEdit}
+          isDraggingWaypoint={draggingWaypoint !== null}
+          suppressExternalClickUntil={suppressExternalClickUntil}
+        />
+        <WaypointDragHandler
+          draggingWaypoint={draggingWaypoint}
+          onPreviewWaypoint={(lat, lon) => {
+            setDraggingWaypoint((current) =>
+              current
+                ? {
+                    ...current,
+                    lat,
+                    lon,
+                  }
+                : null,
+            )
+          }}
+          onCommitWaypoint={(lat, lon) => {
+            if (!draggingWaypoint) {
+              return
+            }
+
+            onMoveWaypointPosition(draggingWaypoint.waypointId, lat, lon)
+            setDraggingWaypoint(null)
+            setSuppressExternalClickUntil(performance.now() + 250)
+          }}
+        />
         {positions.length > 1 ? (
           <>
             <Polygon
@@ -443,7 +662,7 @@ export function RouteMap({
             />
           </>
         ) : null}
-        {waypoints.map((waypoint, index) => {
+        {renderedWaypoints.map((waypoint, index) => {
           const isInUse = inUseLabelSet.has(waypoint.label)
           const issueCodes = issueMap.get(index + 1) ?? []
           const stationRadius = waypoint.hidden ? 5 : Math.max(7, Math.min(14, lineWeight + 3))
@@ -452,18 +671,42 @@ export function RouteMap({
             <>
               <CircleMarker
                 key={waypoint.id}
+                ref={(marker) => {
+                  if (marker) {
+                    markerRefs.current.set(waypoint.id, marker)
+                    return
+                  }
+
+                  markerRefs.current.delete(waypoint.id)
+                }}
                 center={[waypoint.lat, waypoint.lon]}
                 radius={stationRadius}
                 bubblingMouseEvents={false}
-                eventHandlers={
-                  waypoint.hidden
+                eventHandlers={{
+                  click: () => {
+                    onSelectWaypoint(waypoint.id)
+                  },
+                  mousedown: (event) => {
+                    if (focusWaypointId !== waypoint.id) {
+                      return
+                    }
+
+                    event.originalEvent.preventDefault()
+                    event.originalEvent.stopPropagation()
+                    setDraggingWaypoint({
+                      waypointId: waypoint.id,
+                      lat: waypoint.lat,
+                      lon: waypoint.lon,
+                    })
+                  },
+                  ...(waypoint.hidden
                     ? {
                         contextmenu: () => {
                           onDeleteWaypoint(waypoint.id)
                         },
                       }
-                    : undefined
-                }
+                    : {}),
+                }}
                 pathOptions={{
                   color: issueCodes.length > 0 ? '#9f2d1d' : isInUse ? '#144d46' : waypoint.hidden ? '#8f5d12' : '#111827',
                   fillColor: issueCodes.length > 0 ? '#fff1bf' : isInUse ? '#2fa67f' : waypoint.hidden ? '#f1c15a' : '#fff7eb',
@@ -478,6 +721,7 @@ export function RouteMap({
                   <WaypointPopupContent
                     waypoint={waypoint}
                     issueCodes={issueCodes}
+                    onPopupInteractionStart={handlePopupInteractionStart}
                     onRenameWaypoint={onRenameWaypoint}
                     onSetAltLabels={onSetAltLabels}
                     onToggleWaypointKind={onToggleWaypointKind}

@@ -206,7 +206,6 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         candidate.id === action.waypointId
           ? {
               ...candidate,
-              id: `${normalizedLabel}-${candidate.lat.toFixed(6)}-${candidate.lon.toFixed(6)}`,
               label: normalizedLabel,
               hidden: normalizedLabel.startsWith('+'),
             }
@@ -248,9 +247,28 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         candidate.id === action.waypointId
           ? {
               ...candidate,
-              id: `${nextLabel}-${candidate.lat.toFixed(6)}-${candidate.lon.toFixed(6)}`,
               label: nextLabel,
               hidden: nextHidden,
+            }
+          : candidate,
+      )
+
+      return syncInputText(withHistory(state), waypoints)
+    }
+    case 'route/update-waypoint-position': {
+      if (!state.waypoints.some((candidate) => candidate.id === action.waypointId)) {
+        return state
+      }
+
+      const roundedLat = Number(action.lat.toFixed(6))
+      const roundedLon = Number(action.lon.toFixed(6))
+      const waypoints = state.waypoints.map((candidate) =>
+        candidate.id === action.waypointId
+          ? {
+              ...candidate,
+              lat: roundedLat,
+              lon: roundedLon,
+              url: buildOsmUrl(roundedLat, roundedLon),
             }
           : candidate,
       )

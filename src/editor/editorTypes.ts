@@ -48,6 +48,7 @@ export type EditorAction =
   | { type: 'route/rename-waypoint'; waypointId: string; nextLabel: string }
   | { type: 'route/set-alt-labels'; waypointId: string; altLabels: string[] }
   | { type: 'route/toggle-waypoint-kind'; waypointId: string }
+  | { type: 'route/update-waypoint-position'; waypointId: string; lat: number; lon: number }
   | { type: 'route/delete-waypoint'; waypointId: string }
   | { type: 'route/move-waypoint'; fromIndex: number; toIndex: number }
   | { type: 'route/reverse' }

@@ -112,6 +112,14 @@ function App() {
     dispatch({ type: 'route/move-waypoint', fromIndex, toIndex })
   }
 
+  function handleMoveWaypointPosition(waypointId: string, lat: number, lon: number) {
+    dispatch({ type: 'route/update-waypoint-position', waypointId, lat, lon })
+  }
+
+  function handleSelectWaypoint(waypointId: string) {
+    setFocusedWaypointId(waypointId)
+  }
+
   function handleFocusWaypoint(waypointId: string) {
     setFocusedWaypointId(waypointId)
     setFocusRequest((current) => current + 1)
@@ -216,9 +224,12 @@ function App() {
               onSetAltLabels={handleSetAltLabels}
               onToggleWaypointKind={handleToggleWaypointKind}
               onDeleteWaypoint={handleDeleteWaypoint}
+              onMoveWaypointPosition={handleMoveWaypointPosition}
+              onSelectWaypoint={handleSelectWaypoint}
             />
           </article>
 
+          <div className="details-column">
           <article className="panel panel-condensed">
             <div className="panel-heading compact">
               <div>
@@ -365,6 +376,7 @@ function App() {
               </ul>
             )}
           </article>
+          </div>
         </div>
       </section>
     </main>
