@@ -311,19 +311,15 @@ function WaypointPopupContent({
   onSetAltLabels,
   onToggleWaypointKind,
   onDeleteWaypoint,
-  onPopupInteractionStart,
   issueCodes,
 }: Pick<RouteMapProps, 'onRenameWaypoint' | 'onSetAltLabels' | 'onToggleWaypointKind' | 'onDeleteWaypoint'> & {
   waypoint: Waypoint
-  onPopupInteractionStart: () => void
   issueCodes: string[]
 }) {
   const map = useMap()
-  const stationInputRef = useRef<HTMLInputElement | null>(null)
   const [draftLabel, setDraftLabel] = useState(waypoint.label)
   const [draftAltLabels, setDraftAltLabels] = useState(waypoint.altLabels.join(' '))
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
-  const [pendingStationFocus, setPendingStationFocus] = useState(false)
 
   const waypointLine = useMemo(() => exportWaypointLine(waypoint), [waypoint])
 
@@ -339,30 +335,16 @@ function WaypointPopupContent({
     setCopyStatus('idle')
   }, [waypointLine])
 
-  useEffect(() => {
-    if (!pendingStationFocus || waypoint.hidden) {
-      return
-    }
-
-    stationInputRef.current?.focus()
-    stationInputRef.current?.select()
-    setPendingStationFocus(false)
-  }, [pendingStationFocus, waypoint.hidden])
-
-  useEffect(() => {
+  function commitLabel() {
     const nextLabel = draftLabel.trim()
     if (!nextLabel || nextLabel === waypoint.label) {
       return
     }
 
-    const timeoutId = window.setTimeout(() => {
-      onRenameWaypoint(waypoint.id, nextLabel)
-    }, 300)
+    onRenameWaypoint(waypoint.id, nextLabel)
+  }
 
-    return () => window.clearTimeout(timeoutId)
-  }, [draftLabel, onRenameWaypoint, waypoint.id, waypoint.label])
-
-  useEffect(() => {
+  function commitAltLabels() {
     const nextAltLabels = draftAltLabels
       .split(/\s+/)
       .map((label) => label.trim())
@@ -372,12 +354,8 @@ function WaypointPopupContent({
       return
     }
 
-    const timeoutId = window.setTimeout(() => {
-      onSetAltLabels(waypoint.id, nextAltLabels)
-    }, 300)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [draftAltLabels, onSetAltLabels, waypoint.altLabels, waypoint.id])
+    onSetAltLabels(waypoint.id, nextAltLabels)
+  }
 
   async function handleCopyWaypointLine() {
     try {
@@ -392,25 +370,31 @@ function WaypointPopupContent({
     event.stopPropagation()
   }
 
-  function handlePopupInteractionStart() {
-    onPopupInteractionStart()
-  }
-
-  function handleInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+  function handleLabelKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key !== 'Enter') {
       return
     }
 
     event.preventDefault()
     event.stopPropagation()
+    commitLabel()
+    map.closePopup()
+  }
+
+  function handleAltLabelsKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    commitAltLabels()
     map.closePopup()
   }
 
   return (
     <div
       className="waypoint-popup"
-      onMouseDownCapture={handlePopupInteractionStart}
-      onTouchStartCapture={handlePopupInteractionStart}
       onClick={stopEventPropagation}
       onDoubleClick={stopEventPropagation}
       onMouseDown={stopEventPropagation}
@@ -418,14 +402,13 @@ function WaypointPopupContent({
       <div className="waypoint-popup-subheader">{waypoint.hidden ? 'Geometry node' : 'Station'}</div>
       <div className="waypoint-popup-title-row">
         <input
-          ref={stationInputRef}
           className="waypoint-popup-title-input"
           type="text"
           value={draftLabel}
           autoFocus
           onChange={(event) => setDraftLabel(event.target.value)}
-          onFocus={(event) => event.currentTarget.select()}
-          onKeyDown={handleInputKeyDown}
+          onBlur={commitLabel}
+          onKeyDown={handleLabelKeyDown}
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
         />
@@ -439,7 +422,8 @@ function WaypointPopupContent({
           value={draftAltLabels}
           placeholder="Alt labels separated by spaces"
           onChange={(event) => setDraftAltLabels(event.target.value)}
-          onKeyDown={handleInputKeyDown}
+          onBlur={commitAltLabels}
+          onKeyDown={handleAltLabelsKeyDown}
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
         />
@@ -450,12 +434,7 @@ function WaypointPopupContent({
           type="button"
           className="waypoint-copy-button waypoint-convert-button"
           onMouseDown={stopEventPropagation}
-          onClick={() => {
-            if (waypoint.hidden) {
-              setPendingStationFocus(true)
-            }
-            onToggleWaypointKind(waypoint.id)
-          }}
+          onClick={() => onToggleWaypointKind(waypoint.id)}
         >
           {waypoint.hidden ? 'Convert to Station' : 'Convert to Geometry Node'}
         </button>
@@ -510,10 +489,6 @@ export function RouteMap({
   function handleInsertStationAndEdit(lat: number, lon: number) {
     pendingInsertedStationWaypointIds.current = new Set(waypoints.map((waypoint) => waypoint.id))
     onInsertWaypoint(false, lat, lon)
-  }
-
-  function handlePopupInteractionStart() {
-    setSuppressExternalClickUntil(performance.now() + 500)
   }
 
   useEffect(() => {
@@ -721,7 +696,6 @@ export function RouteMap({
                   <WaypointPopupContent
                     waypoint={waypoint}
                     issueCodes={issueCodes}
-                    onPopupInteractionStart={handlePopupInteractionStart}
                     onRenameWaypoint={onRenameWaypoint}
                     onSetAltLabels={onSetAltLabels}
                     onToggleWaypointKind={onToggleWaypointKind}

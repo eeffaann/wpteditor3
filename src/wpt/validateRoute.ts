@@ -53,6 +53,8 @@ function buildIssueCollector(waypoints: Waypoint[]) {
 
 export function validateRoute(waypoints: Waypoint[]): ParseIssue[] {
   const issues = buildIssueCollector(waypoints)
+  const duplicateCoords = new Map<string, number[]>()
+  const duplicateLabels = new Map<string, number[]>()
 
   for (let index = 0; index < waypoints.length; index += 1) {
     const waypoint = waypoints[index]
@@ -72,7 +74,16 @@ export function validateRoute(waypoints: Waypoint[]): ParseIssue[] {
         break
       }
       duplicateWithinWaypoint.add(reducedLabel)
+
+      const lines = duplicateLabels.get(reducedLabel) ?? []
+      lines.push(lineNumber)
+      duplicateLabels.set(reducedLabel, lines)
     }
+
+    const coordsKey = `${waypoint.lat.toFixed(6)},${waypoint.lon.toFixed(6)}`
+    const coordLines = duplicateCoords.get(coordsKey) ?? []
+    coordLines.push(lineNumber)
+    duplicateCoords.set(coordsKey, coordLines)
 
     const labelPattern = /^\+?\*?[a-zA-Z0-9()\/_\-.]+$/
     if (!labelPattern.test(waypoint.label) || waypoint.altLabels.some((altLabel) => !labelPattern.test(altLabel))) {
@@ -153,26 +164,23 @@ export function validateRoute(waypoints: Waypoint[]): ParseIssue[] {
     }
   }
 
-  for (let leftIndex = 0; leftIndex < waypoints.length - 1; leftIndex += 1) {
-    const leftWaypoint = waypoints[leftIndex]
-    const leftLabels = [leftWaypoint.label, ...leftWaypoint.altLabels].map(reduceLabel).filter(Boolean)
+  for (const lines of duplicateCoords.values()) {
+    if (lines.length < 2) {
+      continue
+    }
 
-    for (let rightIndex = leftIndex + 1; rightIndex < waypoints.length; rightIndex += 1) {
-      const rightWaypoint = waypoints[rightIndex]
-      const sameCoordinates =
-        leftWaypoint.lat.toFixed(6) === rightWaypoint.lat.toFixed(6) &&
-        leftWaypoint.lon.toFixed(6) === rightWaypoint.lon.toFixed(6)
+    for (const lineNumber of lines) {
+      issues.add(lineNumber, 'DUPLICATE_COORDS')
+    }
+  }
 
-      if (sameCoordinates) {
-        issues.add(leftIndex + 1, 'DUPLICATE_COORDS')
-        issues.add(rightIndex + 1, 'DUPLICATE_COORDS')
-      }
+  for (const lines of duplicateLabels.values()) {
+    if (lines.length < 2) {
+      continue
+    }
 
-      const rightLabels = [rightWaypoint.label, ...rightWaypoint.altLabels].map(reduceLabel).filter(Boolean)
-      if (leftLabels.some((leftLabel) => rightLabels.includes(leftLabel))) {
-        issues.add(leftIndex + 1, 'DUPLICATE_LABEL')
-        issues.add(rightIndex + 1, 'DUPLICATE_LABEL')
-      }
+    for (const lineNumber of lines) {
+      issues.add(lineNumber, 'DUPLICATE_LABEL')
     }
   }
 

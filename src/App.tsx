@@ -89,7 +89,9 @@ function App() {
   }
 
   function handleMapInsert(hidden: boolean, lat: number, lon: number) {
-    dispatch({ type: 'route/insert', hidden, lat, lon })
+    startTransition(() => {
+      dispatch({ type: 'route/insert', hidden, lat, lon })
+    })
   }
 
   function handleRenameWaypoint(waypointId: string, nextLabel: string) {
@@ -101,19 +103,45 @@ function App() {
   }
 
   function handleToggleWaypointKind(waypointId: string) {
-    dispatch({ type: 'route/toggle-waypoint-kind', waypointId })
+    startTransition(() => {
+      dispatch({ type: 'route/toggle-waypoint-kind', waypointId })
+    })
   }
 
   function handleDeleteWaypoint(waypointId: string) {
-    dispatch({ type: 'route/delete-waypoint', waypointId })
+    startTransition(() => {
+      dispatch({ type: 'route/delete-waypoint', waypointId })
+    })
   }
 
   function handleMoveWaypoint(fromIndex: number, toIndex: number) {
-    dispatch({ type: 'route/move-waypoint', fromIndex, toIndex })
+    startTransition(() => {
+      dispatch({ type: 'route/move-waypoint', fromIndex, toIndex })
+    })
   }
 
   function handleMoveWaypointPosition(waypointId: string, lat: number, lon: number) {
-    dispatch({ type: 'route/update-waypoint-position', waypointId, lat, lon })
+    startTransition(() => {
+      dispatch({ type: 'route/update-waypoint-position', waypointId, lat, lon })
+    })
+  }
+
+  function handleReverseRoute() {
+    startTransition(() => {
+      dispatch({ type: 'route/reverse' })
+    })
+  }
+
+  function handleClearRoute() {
+    startTransition(() => {
+      dispatch({ type: 'route/clear' })
+    })
+  }
+
+  function handleUndo() {
+    startTransition(() => {
+      dispatch({ type: 'history/undo' })
+    })
   }
 
   function handleSelectWaypoint(waypointId: string) {
@@ -192,8 +220,8 @@ function App() {
               <div className="inline-actions route-source-actions">
                 <button type="button" onClick={() => handleLoad(false)}>Load</button>
                 <button type="button" onClick={() => handleLoad(true)}>Load and Pan</button>
-                <button type="button" onClick={() => dispatch({ type: 'route/reverse' })}>Reverse order</button>
-                <button type="button" onClick={() => dispatch({ type: 'route/clear' })}>Clear</button>
+                <button type="button" onClick={handleReverseRoute}>Reverse order</button>
+                <button type="button" onClick={handleClearRoute}>Clear</button>
                 <button type="button" onClick={handleSaveToTab}>Save to Tab</button>
               </div>
             </div>
@@ -208,7 +236,7 @@ function App() {
                 <p>Current vertical slice: route rendering, fit-to-route, and table-driven editing.</p>
               </div>
               <div className="inline-actions">
-                <button type="button" onClick={() => dispatch({ type: 'history/undo' })}>Undo</button>
+                <button type="button" onClick={handleUndo}>Undo</button>
               </div>
             </div>
             <RouteMap
