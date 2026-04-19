@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap');
 
 :root {
   --bg: #f3ebdf;
@@ -13,7 +13,7 @@
   --accent-strong: #144d46;
   --shadow: 0 18px 40px rgba(85, 64, 43, 0.12);
 
-  font: 15px/1.45 'Space Grotesk', sans-serif;
+  font: 14px/1.4 'Space Grotesk', sans-serif;
   color: var(--text);
   background:
     radial-gradient(circle at top left, rgba(196, 81, 45, 0.14), transparent 24%),
@@ -60,7 +60,7 @@ h1 {
 }
 
 h2 {
-  font-size: 1.05rem;
+  font-size: 0.98rem;
 }
 
 p {

@@ -21,11 +21,21 @@ export type ParsedRoute = {
   issues: ParseIssue[]
 }
 
+export type LoadedRoute = {
+  id: string
+  filename: string
+  inputText: string
+  waypoints: Waypoint[]
+  issues: ParseIssue[]
+}
+
 export type EditorSnapshot = {
   inputText: string
   waypoints: Waypoint[]
   issues: ParseIssue[]
   loadedLabelSet: string[]
+  loadedRoutes: LoadedRoute[]
+  activeRouteId: string | null
 }
 
 export type EditorState = {
@@ -37,6 +47,8 @@ export type EditorState = {
   layout: EditorLayout
   thicknessStep: number
   fitRequest: number
+  loadedRoutes: LoadedRoute[]
+  activeRouteId: string | null
   history: EditorSnapshot[]
 }
 
@@ -44,15 +56,25 @@ export type EditorAction =
   | { type: 'input/set'; value: string }
   | { type: 'labels/input-set'; value: string }
   | { type: 'route/load'; fitToRoute: boolean; route: ParsedRoute }
+  | { type: 'routes/add-route'; route: LoadedRoute }
+  | { type: 'routes/replace-active-route'; route: LoadedRoute }
   | { type: 'route/insert'; lat: number; lon: number; hidden: boolean }
   | { type: 'route/rename-waypoint'; waypointId: string; nextLabel: string }
   | { type: 'route/set-alt-labels'; waypointId: string; altLabels: string[] }
   | { type: 'route/toggle-waypoint-kind'; waypointId: string }
   | { type: 'route/update-waypoint-position'; waypointId: string; lat: number; lon: number }
+  | { type: 'route/update-shared-station-position'; sourceLat: number; sourceLon: number; lat: number; lon: number }
   | { type: 'route/delete-waypoint'; waypointId: string }
   | { type: 'route/move-waypoint'; fromIndex: number; toIndex: number }
+  | { type: 'route/reuse-background-station'; label: string; altLabels: string[]; lat: number; lon: number; hidden: boolean }
+  | { type: 'route/merge-background-station'; deleteWaypointId: string; label: string; altLabels: string[]; lat: number; lon: number }
   | { type: 'route/reverse' }
   | { type: 'route/clear' }
+  | { type: 'routes/load-folder'; routes: LoadedRoute[] }
+  | { type: 'routes/add-folder'; routes: LoadedRoute[] }
+  | { type: 'routes/set-active'; routeId: string }
+  | { type: 'routes/rename'; routeId: string; filename: string }
+  | { type: 'routes/remove'; routeId: string }
   | { type: 'history/undo' }
   | { type: 'layout/toggle' }
   | { type: 'thickness/set'; value: number }

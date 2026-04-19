@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { CircleMarker, MapContainer, Marker, Polygon, Polyline, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import { CircleMarker as LeafletCircleMarker, LatLngBounds, divIcon } from 'leaflet'
 import type { ParseIssue, Waypoint } from '../editor/editorTypes'
@@ -6,6 +6,12 @@ import { exportWaypointLine } from '../wpt/exportWpt'
 
 type RouteMapProps = {
   waypoints: Waypoint[]
+  activeRouteFilename: string | null
+  backgroundRoutes: {
+    id: string
+    filename: string
+    waypoints: Waypoint[]
+  }[]
   fitRequest: number
   focusWaypointId: string | null
   focusRequest: number
@@ -18,7 +24,12 @@ type RouteMapProps = {
   onToggleWaypointKind: (waypointId: string) => void
   onDeleteWaypoint: (waypointId: string) => void
   onMoveWaypointPosition: (waypointId: string, lat: number, lon: number) => void
+  onMoveSharedStationPosition: (sourceLat: number, sourceLon: number, lat: number, lon: number) => void
   onSelectWaypoint: (waypointId: string) => void
+  onReuseBackgroundStation: (label: string, altLabels: string[], lat: number, lon: number, hidden: boolean) => void
+  onMergeBackgroundStation: (deleteWaypointId: string, label: string, altLabels: string[], lat: number, lon: number) => void
+  onHoverWaypoint: (waypointId: string) => void
+  onUnhoverWaypoint: () => void
 }
 
 type DraggingWaypoint = {
@@ -26,6 +37,33 @@ type DraggingWaypoint = {
   lat: number
   lon: number
 }
+
+type DraggingSharedStation = {
+  sourceLat: number
+  sourceLon: number
+  lat: number
+  lon: number
+}
+
+type DraggingTarget =
+  | { kind: 'waypoint'; payload: DraggingWaypoint }
+  | { kind: 'shared-station'; payload: DraggingSharedStation }
+
+type BackgroundStationMember = {
+  routeId: string
+  routeFilename: string
+  waypoint: Waypoint
+  isActive: boolean
+}
+
+type BackgroundStationGroup = {
+  key: string
+  lat: number
+  lon: number
+  members: BackgroundStationMember[]
+}
+
+const backgroundRouteColors = ['#6b7280', '#4b5563', '#7c868f', '#5b6470']
 
 const warningIcon = divIcon({
   className: 'map-warning-icon-shell',
@@ -51,6 +89,14 @@ function convertMercXYToLL(point: MercatorPoint): [number, number] {
     (360 / Math.PI) * (Math.PI / 4 - Math.atan(Math.exp(2 * Math.PI * (point.y - 0.5)))),
     360 * (point.x - 0.5),
   ]
+}
+
+function toCoordinateKey(lat: number, lon: number) {
+  return `${lat.toFixed(6)},${lon.toFixed(6)}`
+}
+
+function sameCoordinate(lat1: number, lon1: number, lat2: number, lon2: number) {
+  return toCoordinateKey(lat1, lon1) === toCoordinateKey(lat2, lon2)
 }
 
 function calcHighlightLines(waypoints: Waypoint[], pixelThickness: number) {
@@ -85,6 +131,26 @@ function calcHighlightLines(waypoints: Waypoint[], pixelThickness: number) {
   }
 
   return { hi, lo }
+}
+
+function sampleWaypointsForCorridor(waypoints: Waypoint[], targetPointCount: number) {
+  if (waypoints.length <= targetPointCount) {
+    return waypoints
+  }
+
+  const stride = Math.max(2, Math.ceil(waypoints.length / targetPointCount))
+  const sampled: Waypoint[] = [waypoints[0]]
+
+  for (let index = stride; index < waypoints.length - 1; index += stride) {
+    sampled.push(waypoints[index])
+  }
+
+  const lastWaypoint = waypoints.at(-1)
+  if (lastWaypoint && sampled.at(-1)?.id !== lastWaypoint.id) {
+    sampled.push(lastWaypoint)
+  }
+
+  return sampled
 }
 
 function FitToRoute({ fitRequest, waypoints }: Pick<RouteMapProps, 'fitRequest' | 'waypoints'>) {
@@ -259,18 +325,18 @@ function MapInsertionHandler({
 }
 
 function WaypointDragHandler({
-  draggingWaypoint,
+  isDragging,
   onPreviewWaypoint,
   onCommitWaypoint,
 }: {
-  draggingWaypoint: DraggingWaypoint | null
+  isDragging: boolean
   onPreviewWaypoint: (lat: number, lon: number) => void
   onCommitWaypoint: (lat: number, lon: number) => void
 }) {
   const map = useMap()
 
   useEffect(() => {
-    if (!draggingWaypoint) {
+    if (!isDragging) {
       map.dragging.enable()
       map.doubleClickZoom.enable()
       return
@@ -283,18 +349,18 @@ function WaypointDragHandler({
       map.dragging.enable()
       map.doubleClickZoom.enable()
     }
-  }, [draggingWaypoint, map])
+  }, [isDragging, map])
 
   useMapEvents({
     mousemove(event) {
-      if (!draggingWaypoint) {
+      if (!isDragging) {
         return
       }
 
       onPreviewWaypoint(event.latlng.lat, event.latlng.lng)
     },
     mouseup(event) {
-      if (!draggingWaypoint) {
+      if (!isDragging) {
         return
       }
 
@@ -464,8 +530,107 @@ function WaypointPopupContent({
   )
 }
 
-export function RouteMap({
+function BackgroundStationPopupContent({
+  group,
   waypoints,
+  onReuseBackgroundStation,
+  onMergeBackgroundStation,
+}: {
+  group: BackgroundStationGroup
+  waypoints: Waypoint[]
+  onReuseBackgroundStation: RouteMapProps['onReuseBackgroundStation']
+  onMergeBackgroundStation: RouteMapProps['onMergeBackgroundStation']
+}) {
+  const activeMembers = group.members.filter((member) => member.isActive)
+  const backgroundMembers = group.members.filter((member) => !member.isActive)
+
+  // Calculate nearest active station to suggest merge with each background station
+  const getNearestActiveStation = (bgLat: number, bgLon: number) => {
+    if (waypoints.length === 0) return null
+
+    let nearest = { waypoint: waypoints[0], distance: Infinity, index: 0 }
+
+    for (let index = 0; index < waypoints.length; index += 1) {
+      const wp = waypoints[index]
+      if (wp.hidden) continue
+
+      const latDiff = wp.lat - bgLat
+      const lonDiff = wp.lon - bgLon
+      const distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff)
+
+      if (distance < nearest.distance) {
+        nearest = { waypoint: wp, distance, index }
+      }
+    }
+
+    return nearest.distance < Infinity ? nearest : null
+  }
+
+  return (
+    <div className="waypoint-popup">
+      <div className="waypoint-popup-subheader">Shared station</div>
+      {activeMembers.length > 0 ? (
+        <div className="background-station-list">
+          {activeMembers.map((member) => (
+            <div key={`active-${member.waypoint.id}`} className="background-station-item">
+              <strong>{member.waypoint.label}</strong>
+              <span>Current line</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="background-station-list">
+        {backgroundMembers.map((member) => {
+          const nearest = getNearestActiveStation(member.waypoint.lat, member.waypoint.lon)
+          return (
+            <div key={`${member.routeId}-${member.waypoint.id}`} className="background-station-item">
+              <strong>{member.waypoint.label}</strong>
+              <span>{member.routeFilename}</span>
+              {nearest ? (
+                <button
+                  type="button"
+                  className="waypoint-copy-button background-add-button"
+                  onClick={() =>
+                    onMergeBackgroundStation(
+                      nearest.waypoint.id,
+                      member.waypoint.label,
+                      member.waypoint.altLabels,
+                      member.waypoint.lat,
+                      member.waypoint.lon,
+                    )
+                  }
+                  title={`Merge: replace "${nearest.waypoint.label}" with "${member.waypoint.label}"`}
+                >
+                  Merge with {nearest.waypoint.label}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="waypoint-copy-button background-add-button"
+                onClick={() =>
+                  onReuseBackgroundStation(
+                    member.waypoint.label,
+                    member.waypoint.altLabels,
+                    group.lat,
+                    group.lon,
+                    false,
+                  )
+                }
+              >
+                Add to this line
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export const RouteMap = memo(function RouteMap({
+  waypoints,
+  activeRouteFilename,
+  backgroundRoutes,
   fitRequest,
   focusWaypointId,
   focusRequest,
@@ -478,11 +643,17 @@ export function RouteMap({
   onToggleWaypointKind,
   onDeleteWaypoint,
   onMoveWaypointPosition,
+  onMoveSharedStationPosition,
   onSelectWaypoint,
+  onReuseBackgroundStation,
+  onMergeBackgroundStation,
+  onHoverWaypoint,
+  onUnhoverWaypoint,
 }: RouteMapProps) {
-  const [draggingWaypoint, setDraggingWaypoint] = useState<DraggingWaypoint | null>(null)
+  const [draggingTarget, setDraggingTarget] = useState<DraggingTarget | null>(null)
   const [suppressExternalClickUntil, setSuppressExternalClickUntil] = useState(0)
   const [pendingPopupWaypointId, setPendingPopupWaypointId] = useState<string | null>(null)
+  const [openPopupId, setOpenPopupId] = useState<string | null>(null)
   const markerRefs = useRef(new Map<string, LeafletCircleMarker>())
   const pendingInsertedStationWaypointIds = useRef<Set<string> | null>(null)
 
@@ -525,30 +696,132 @@ export function RouteMap({
     setPendingPopupWaypointId(null)
   }, [pendingPopupWaypointId, waypoints])
 
+  const stationGroups = useMemo(() => {
+    const groups = new Map<string, BackgroundStationGroup>()
+
+    for (const waypoint of waypoints) {
+      const key = toCoordinateKey(waypoint.lat, waypoint.lon)
+      const existing = groups.get(key)
+      if (existing) {
+        existing.members.push({
+          routeId: 'active',
+          routeFilename: activeRouteFilename ?? 'Current line',
+          waypoint,
+          isActive: true,
+        })
+        continue
+      }
+
+      groups.set(key, {
+        key,
+        lat: waypoint.lat,
+        lon: waypoint.lon,
+        members: [
+          {
+            routeId: 'active',
+            routeFilename: activeRouteFilename ?? 'Current line',
+            waypoint,
+            isActive: true,
+          },
+        ],
+      })
+    }
+
+    for (const route of backgroundRoutes) {
+      for (const waypoint of route.waypoints) {
+        const key = toCoordinateKey(waypoint.lat, waypoint.lon)
+        const existing = groups.get(key)
+        if (existing) {
+          existing.members.push({ routeId: route.id, routeFilename: route.filename, waypoint, isActive: false })
+          continue
+        }
+
+        groups.set(key, {
+          key,
+          lat: waypoint.lat,
+          lon: waypoint.lon,
+          members: [{ routeId: route.id, routeFilename: route.filename, waypoint, isActive: false }],
+        })
+      }
+    }
+
+    return Array.from(groups.values())
+  }, [activeRouteFilename, backgroundRoutes, waypoints])
+
+  const groupedStationGroups = useMemo(
+    () =>
+      stationGroups.filter((group) => {
+        const hasActiveMember = group.members.some((member) => member.isActive)
+        const hasBackgroundMember = group.members.some((member) => !member.isActive)
+        const activeMemberCount = group.members.filter((member) => member.isActive).length
+
+        // If a station exists on the active line, use the normal active-station marker behavior.
+        if (hasActiveMember) {
+          return false
+        }
+
+        return hasBackgroundMember || activeMemberCount > 1
+      }),
+    [stationGroups],
+  )
+
+  const sharedWithBackgroundCoordinateKeys = useMemo(() => {
+    const keys = new Set<string>()
+
+    for (const group of stationGroups) {
+      const hasActiveMember = group.members.some((member) => member.isActive)
+      const hasBackgroundMember = group.members.some((member) => !member.isActive)
+      if (hasActiveMember && hasBackgroundMember) {
+        keys.add(group.key)
+      }
+    }
+
+    return keys
+  }, [stationGroups])
+
+  const groupedCoordinateKeys = useMemo(
+    () => new Set(groupedStationGroups.map((group) => group.key)),
+    [groupedStationGroups],
+  )
+
   const positions = useMemo(
     () =>
       waypoints.map((waypoint) => {
-        if (draggingWaypoint?.waypointId === waypoint.id) {
-          return [draggingWaypoint.lat, draggingWaypoint.lon] as [number, number]
+        if (draggingTarget?.kind === 'waypoint' && draggingTarget.payload.waypointId === waypoint.id) {
+          return [draggingTarget.payload.lat, draggingTarget.payload.lon] as [number, number]
+        }
+
+        if (
+          draggingTarget?.kind === 'shared-station' &&
+          sameCoordinate(waypoint.lat, waypoint.lon, draggingTarget.payload.sourceLat, draggingTarget.payload.sourceLon)
+        ) {
+          return [draggingTarget.payload.lat, draggingTarget.payload.lon] as [number, number]
         }
 
         return [waypoint.lat, waypoint.lon] as [number, number]
       }),
-    [draggingWaypoint, waypoints],
+    [draggingTarget, waypoints],
   )
 
   const renderedWaypoints = useMemo(
     () =>
       waypoints.map((waypoint) =>
-        draggingWaypoint?.waypointId === waypoint.id
+        draggingTarget?.kind === 'waypoint' && draggingTarget.payload.waypointId === waypoint.id
           ? {
               ...waypoint,
-              lat: draggingWaypoint.lat,
-              lon: draggingWaypoint.lon,
+              lat: draggingTarget.payload.lat,
+              lon: draggingTarget.payload.lon,
             }
+          : draggingTarget?.kind === 'shared-station' &&
+              sameCoordinate(waypoint.lat, waypoint.lon, draggingTarget.payload.sourceLat, draggingTarget.payload.sourceLon)
+            ? {
+                ...waypoint,
+                lat: draggingTarget.payload.lat,
+                lon: draggingTarget.payload.lon,
+              }
           : waypoint,
       ),
-    [draggingWaypoint, waypoints],
+    [draggingTarget, waypoints],
   )
 
   const inUseLabelSet = useMemo(() => new Set(inUseLabels), [inUseLabels])
@@ -565,10 +838,15 @@ export function RouteMap({
 
     return nextMap
   }, [issues])
+  const isLargeRoute = renderedWaypoints.length >= 180
   const thicknessMultiplier = lineWeight / 4
+  const corridorWaypoints = useMemo(
+    () => (isLargeRoute ? sampleWaypointsForCorridor(renderedWaypoints, 120) : renderedWaypoints),
+    [isLargeRoute, renderedWaypoints],
+  )
   const highlightLines = useMemo(
-    () => calcHighlightLines(renderedWaypoints, 20 * thicknessMultiplier),
-    [renderedWaypoints, thicknessMultiplier],
+    () => calcHighlightLines(corridorWaypoints, 20 * thicknessMultiplier),
+    [corridorWaypoints, thicknessMultiplier],
   )
   const corridorPolygon = useMemo(
     () => [...highlightLines.hi, ...[...highlightLines.lo].reverse()],
@@ -588,45 +866,101 @@ export function RouteMap({
         <MapInsertionHandler
           onInsertWaypoint={onInsertWaypoint}
           onInsertStationAndEdit={handleInsertStationAndEdit}
-          isDraggingWaypoint={draggingWaypoint !== null}
+          isDraggingWaypoint={draggingTarget !== null}
           suppressExternalClickUntil={suppressExternalClickUntil}
         />
         <WaypointDragHandler
-          draggingWaypoint={draggingWaypoint}
+          isDragging={draggingTarget !== null}
           onPreviewWaypoint={(lat, lon) => {
-            setDraggingWaypoint((current) =>
-              current
-                ? {
-                    ...current,
+            setDraggingTarget((current) => {
+              if (!current) {
+                return null
+              }
+
+              if (current.kind === 'waypoint') {
+                return {
+                  ...current,
+                  payload: {
+                    ...current.payload,
                     lat,
                     lon,
-                  }
-                : null,
-            )
+                  },
+                }
+              }
+
+              return {
+                ...current,
+                payload: {
+                  ...current.payload,
+                  lat,
+                  lon,
+                },
+              }
+            })
           }}
           onCommitWaypoint={(lat, lon) => {
-            if (!draggingWaypoint) {
+            if (!draggingTarget) {
               return
             }
 
-            onMoveWaypointPosition(draggingWaypoint.waypointId, lat, lon)
-            setDraggingWaypoint(null)
+            if (draggingTarget.kind === 'waypoint') {
+              onMoveWaypointPosition(draggingTarget.payload.waypointId, lat, lon)
+            } else {
+              onMoveSharedStationPosition(
+                draggingTarget.payload.sourceLat,
+                draggingTarget.payload.sourceLon,
+                lat,
+                lon,
+              )
+            }
+
+            setDraggingTarget(null)
             setSuppressExternalClickUntil(performance.now() + 250)
           }}
         />
+        {backgroundRoutes.map((route, routeIndex) => {
+          const routeColor = backgroundRouteColors[routeIndex % backgroundRouteColors.length]
+          const routePositions = route.waypoints.map((waypoint) => [waypoint.lat, waypoint.lon] as [number, number])
+
+          return (
+            <Fragment key={`${route.id}-background`}>
+              {routePositions.length > 1 ? (
+                <Polyline
+                  key={`${route.id}-bg-line`}
+                  positions={routePositions}
+                  pathOptions={{
+                    color: routeColor,
+                    weight: Math.max(3, 5 * thicknessMultiplier),
+                    opacity: 0.55,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }}
+                >
+                  <Tooltip sticky opacity={0.94}>
+                    {route.filename}
+                  </Tooltip>
+                </Polyline>
+              ) : null}
+            </Fragment>
+          )
+        })}
         {positions.length > 1 ? (
           <>
-            <Polygon
-              positions={corridorPolygon}
-              pathOptions={{
-                stroke: false,
-                fillColor: '#ff6b5f',
-                fillOpacity: 0.26,
-                fillRule: 'nonzero',
-              }}
-            />
+            {corridorPolygon.length > 2 ? (
+              <Polygon
+                positions={corridorPolygon}
+                interactive={false}
+                pathOptions={{
+                  stroke: false,
+                  fillColor: '#ff6b5f',
+                  fillOpacity: 0.26,
+                  fillRule: 'nonzero',
+                }}
+              />
+            ) : null}
             <Polyline
               positions={positions}
+              interactive={false}
               pathOptions={{
                 color: '#1769ff',
                 weight: 7 * thicknessMultiplier,
@@ -637,15 +971,74 @@ export function RouteMap({
             />
           </>
         ) : null}
+        {groupedStationGroups.map((group, groupIndex) => {
+          const routeColor = backgroundRouteColors[groupIndex % backgroundRouteColors.length]
+          const activeMembers = group.members.filter((member) => member.isActive)
+          const hasActiveStation = activeMembers.some((member) => !member.waypoint.hidden)
+          const hasActiveGeometry = activeMembers.length > 0 && !hasActiveStation
+
+          return (
+            <CircleMarker
+              key={`bg-group-${group.key}`}
+              center={[
+                draggingTarget?.kind === 'shared-station' &&
+                sameCoordinate(group.lat, group.lon, draggingTarget.payload.sourceLat, draggingTarget.payload.sourceLon)
+                  ? draggingTarget.payload.lat
+                  : group.lat,
+                draggingTarget?.kind === 'shared-station' &&
+                sameCoordinate(group.lat, group.lon, draggingTarget.payload.sourceLat, draggingTarget.payload.sourceLon)
+                  ? draggingTarget.payload.lon
+                  : group.lon,
+              ]}
+              radius={Math.max(5, Math.min(9, lineWeight + 1))}
+              bubblingMouseEvents={false}
+              pathOptions={{
+                color: hasActiveStation ? '#111827' : hasActiveGeometry ? '#8f5d12' : routeColor,
+                fillColor: hasActiveStation ? '#fff7eb' : hasActiveGeometry ? '#f1c15a' : routeColor,
+                fillOpacity: hasActiveStation || hasActiveGeometry ? 0.98 : 0.46,
+                weight: hasActiveStation ? 3 : hasActiveGeometry ? 2 : 1,
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -8]} opacity={0.92}>
+                {`${group.members.length} station${group.members.length > 1 ? 's' : ''}${hasActiveStation ? ' · on this line' : ''}`}
+              </Tooltip>
+              <Popup
+                eventHandlers={{
+                  add: () => setOpenPopupId(`bg-${group.key}`),
+                  remove: () => setOpenPopupId((prev) => prev === `bg-${group.key}` ? null : prev),
+                }}
+              >
+                {openPopupId === `bg-${group.key}` ? (
+                  <BackgroundStationPopupContent
+                    group={group}
+                    waypoints={waypoints}
+                    onReuseBackgroundStation={onReuseBackgroundStation}
+                    onMergeBackgroundStation={onMergeBackgroundStation}
+                  />
+                ) : null}
+              </Popup>
+            </CircleMarker>
+          )
+        })}
         {renderedWaypoints.map((waypoint, index) => {
+          if (groupedCoordinateKeys.has(toCoordinateKey(waypoint.lat, waypoint.lon))) {
+            return null
+          }
+
           const isInUse = inUseLabelSet.has(waypoint.label)
           const issueCodes = issueMap.get(index + 1) ?? []
           const stationRadius = waypoint.hidden ? 5 : Math.max(7, Math.min(14, lineWeight + 3))
+          const coordinateKey = toCoordinateKey(waypoint.lat, waypoint.lon)
+          const isInterchange = sharedWithBackgroundCoordinateKeys.has(coordinateKey)
+          const showMarkerOverlay =
+            !isLargeRoute ||
+            focusWaypointId === waypoint.id ||
+            openPopupId === waypoint.id ||
+            pendingPopupWaypointId === waypoint.id
 
           return (
-            <>
+            <Fragment key={waypoint.id}>
               <CircleMarker
-                key={waypoint.id}
                 ref={(marker) => {
                   if (marker) {
                     markerRefs.current.set(waypoint.id, marker)
@@ -661,6 +1054,14 @@ export function RouteMap({
                   click: () => {
                     onSelectWaypoint(waypoint.id)
                   },
+                  mouseover: () => {
+                    if (!waypoint.hidden) {
+                      onHoverWaypoint(waypoint.id)
+                    }
+                  },
+                  mouseout: () => {
+                    onUnhoverWaypoint()
+                  },
                   mousedown: (event) => {
                     if (focusWaypointId !== waypoint.id) {
                       return
@@ -668,10 +1069,26 @@ export function RouteMap({
 
                     event.originalEvent.preventDefault()
                     event.originalEvent.stopPropagation()
-                    setDraggingWaypoint({
-                      waypointId: waypoint.id,
-                      lat: waypoint.lat,
-                      lon: waypoint.lon,
+                    if (isInterchange) {
+                      setDraggingTarget({
+                        kind: 'shared-station',
+                        payload: {
+                          sourceLat: waypoint.lat,
+                          sourceLon: waypoint.lon,
+                          lat: waypoint.lat,
+                          lon: waypoint.lon,
+                        },
+                      })
+                      return
+                    }
+
+                    setDraggingTarget({
+                      kind: 'waypoint',
+                      payload: {
+                        waypointId: waypoint.id,
+                        lat: waypoint.lat,
+                        lon: waypoint.lon,
+                      },
                     })
                   },
                   ...(waypoint.hidden
@@ -683,27 +1100,38 @@ export function RouteMap({
                     : {}),
                 }}
                 pathOptions={{
-                  color: issueCodes.length > 0 ? '#9f2d1d' : isInUse ? '#144d46' : waypoint.hidden ? '#8f5d12' : '#111827',
-                  fillColor: issueCodes.length > 0 ? '#fff1bf' : isInUse ? '#2fa67f' : waypoint.hidden ? '#f1c15a' : '#fff7eb',
+                  color: issueCodes.length > 0 ? '#9f2d1d' : isInterchange ? '#0891b2' : isInUse ? '#144d46' : waypoint.hidden ? '#8f5d12' : '#111827',
+                  fillColor: issueCodes.length > 0 ? '#fff1bf' : isInterchange ? '#cffafe' : isInUse ? '#2fa67f' : waypoint.hidden ? '#f1c15a' : '#fff7eb',
                   fillOpacity: 0.98,
-                  weight: waypoint.hidden ? 2 : 3,
+                  weight: isInterchange ? 3 : waypoint.hidden ? 2 : 3,
                 }}
               >
-                <Tooltip direction="top" offset={[0, -8]} opacity={1}>
-                  {`${index + 1}. ${waypoint.label}`}
-                </Tooltip>
-                <Popup>
-                  <WaypointPopupContent
-                    waypoint={waypoint}
-                    issueCodes={issueCodes}
-                    onRenameWaypoint={onRenameWaypoint}
-                    onSetAltLabels={onSetAltLabels}
-                    onToggleWaypointKind={onToggleWaypointKind}
-                    onDeleteWaypoint={onDeleteWaypoint}
-                  />
-                </Popup>
+                {showMarkerOverlay ? (
+                  <>
+                    <Tooltip direction="top" offset={[0, -8]} opacity={1}>
+                      {`${index + 1}. ${waypoint.label}`}
+                    </Tooltip>
+                    <Popup
+                      eventHandlers={{
+                        add: () => setOpenPopupId(waypoint.id),
+                        remove: () => setOpenPopupId((prev) => prev === waypoint.id ? null : prev),
+                      }}
+                    >
+                      {openPopupId === waypoint.id ? (
+                        <WaypointPopupContent
+                          waypoint={waypoint}
+                          issueCodes={issueCodes}
+                          onRenameWaypoint={onRenameWaypoint}
+                          onSetAltLabels={onSetAltLabels}
+                          onToggleWaypointKind={onToggleWaypointKind}
+                          onDeleteWaypoint={onDeleteWaypoint}
+                        />
+                      ) : null}
+                    </Popup>
+                  </>
+                ) : null}
               </CircleMarker>
-              {issueCodes.length > 0 ? (
+              {issueCodes.length > 0 && !isLargeRoute ? (
                 <Marker
                   key={`${waypoint.id}-warning`}
                   position={[waypoint.lat, waypoint.lon]}
@@ -712,10 +1140,10 @@ export function RouteMap({
                   zIndexOffset={1000}
                 />
               ) : null}
-            </>
+            </Fragment>
           )
         })}
       </MapContainer>
     </div>
   )
-}
+})
