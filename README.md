@@ -29,10 +29,24 @@ npm install
 npm run dev
 ```
 
+## Deployment
+
+The app is hosted on GitHub Pages at https://eeffaann.github.io/wpteditor3/.
+Vite's base path is `/wpteditor3/` so built assets resolve under the repository URL.
+
+In the repository's **Settings > Pages**, set **Build and deployment > Source**
+to **GitHub Actions**. The `Deploy to GitHub Pages` workflow builds and deploys
+the `dist` directory on pushes to `master`, or when run manually from the
+Actions tab. No Azure resources or deployment secrets are needed.
+
+The first deployment happens after the workflow is committed and pushed to
+`master`. The previous Azure Static Web Apps workflow has been removed; any
+existing Azure resource and its repository deployment secret can be deleted
+separately if no longer needed.
+
 ## Next Implementation Targets
 
 1. Draggable marker editing with undoable coordinate updates
 2. Waypoint add/delete and popup actions on the map
 3. Alternate label support and hidden waypoint workflows
 4. Richer TravelMapping-specific validation rules
-5. Azure Static Web App deployment polish
