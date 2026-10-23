@@ -1,14 +1,8 @@
 import type { EditorAction, EditorSnapshot, EditorState, LoadedRoute } from './editorTypes'
 import { parseInUseLabels } from '../wpt/parseWpt'
-import { buildOsmUrl, exportWpt } from '../wpt/exportWpt'
-import { validateRoute } from '../wpt/validateRoute'
-
-function toMercatorPoint(lat: number, lon: number) {
-  return {
-    x: lon / 360 + 0.5,
-    y: 0.5 * Math.log(Math.tan(Math.PI / 4 - (Math.PI / 360) * lat)) / Math.PI + 0.5,
-  }
-}
+import { buildOsmUrl } from '../wpt/exportWpt'
+import { editRouteDocument, parseRouteDocument } from '../wpt/routeDocument'
+import { sameCoordinate, toCoordinateKey, toMercatorPoint } from '../wpt/geometry'
 
 function squareDistance(x1: number, y1: number, x2: number, y2: number) {
   return (x1 - x2) ** 2 + (y1 - y2) ** 2
@@ -67,13 +61,6 @@ function nextGeneratedLabel(existingLabels: string[], hidden: boolean) {
   const existing = new Set(existingLabels)
 
   if (hidden) {
-    for (let attempt = 0; attempt < 10_000; attempt += 1) {
-      const candidate = `+X${String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')}`
-      if (!existing.has(candidate)) {
-        return candidate
-      }
-    }
-
     for (let index = 0; index < 1_000_000; index += 1) {
       const candidate = `+X${String(index).padStart(6, '0')}`
       if (!existing.has(candidate)) {
@@ -114,14 +101,13 @@ function buildWaypointId(waypoints: EditorState['waypoints'], label: string, lat
     return baseId
   }
 
-  for (let index = 2; index < 10_000; index += 1) {
+  for (let index = 2; ; index += 1) {
     const candidateId = `${baseId}-${index}`
     if (!waypoints.some((candidate) => candidate.id === candidateId)) {
       return candidateId
     }
   }
 
-  return `${baseId}-${Date.now()}`
 }
 
 function syncActiveRoute(state: EditorState, nextRoute: Pick<LoadedRoute, 'inputText' | 'waypoints' | 'issues'>) {
@@ -145,15 +131,9 @@ function syncActiveRoute(state: EditorState, nextRoute: Pick<LoadedRoute, 'input
 }
 
 
-function sameCoordinate(lat1: number, lon1: number, lat2: number, lon2: number) {
-  return lat1.toFixed(6) === lat2.toFixed(6) && lon1.toFixed(6) === lon2.toFixed(6)
-}
-
-function toCoordinateKey(lat: number, lon: number) {
-  return `${lat.toFixed(6)},${lon.toFixed(6)}`
-}
-
-function mergeLoadedRoutesByCoordinate(routes: LoadedRoute[]) {
+function mergeLoadedRoutesByCoordinate(routes: LoadedRoute[], namingMode: EditorState['namingMode']) {
+  routes = routes.map((route) => route.originalInputText === undefined ? { ...route, originalInputText: route.inputText } : route)
+  if (namingMode === 'independent') return routes
   const canonicalLabelByCoordinate = new Map<string, string>()
 
   for (const route of routes) {
@@ -194,19 +174,13 @@ function mergeLoadedRoutesByCoordinate(routes: LoadedRoute[]) {
 
     return {
       ...route,
-      waypoints: nextWaypoints,
-      issues: validateRoute(nextWaypoints),
-      inputText: exportWpt(nextWaypoints),
+      ...editRouteDocument(route, nextWaypoints),
     }
   })
 }
 
 function syncInputText(state: EditorState, waypoints: EditorState['waypoints']) {
-  const nextRoute = {
-    waypoints,
-    issues: validateRoute(waypoints),
-    inputText: exportWpt(waypoints),
-  }
+  const nextRoute = editRouteDocument(state, waypoints)
 
   const nextState = {
     ...state,
@@ -219,11 +193,13 @@ function syncInputText(state: EditorState, waypoints: EditorState['waypoints']) 
 function cloneSnapshot(state: EditorState): EditorSnapshot {
   return {
     inputText: state.inputText,
+    draftBaseline: state.draftBaseline,
     waypoints: state.waypoints,
     issues: state.issues,
     loadedLabelSet: state.loadedLabelSet,
     loadedRoutes: state.loadedRoutes,
     activeRouteId: state.activeRouteId,
+    namingMode: state.namingMode,
   }
 }
 
@@ -236,6 +212,7 @@ function withHistory(state: EditorState): EditorState {
 
 export const initialEditorState: EditorState = {
   inputText: '',
+  draftBaseline: null,
   inUseLabelText: '',
   waypoints: [],
   issues: [],
@@ -246,15 +223,23 @@ export const initialEditorState: EditorState = {
   loadedRoutes: [],
   activeRouteId: null,
   history: [],
+  namingMode: 'shared',
 }
 
-export function editorReducer(state: EditorState, action: EditorAction): EditorState {
+function reduceEditor(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
-    case 'input/set':
-      return {
-        ...state,
-        inputText: action.value,
-      }
+    case 'input/set': {
+      if (state.inputText === action.value) return state
+      const nextRoute = parseRouteDocument(action.value, state.waypoints)
+      return syncActiveRoute({
+        ...withHistory(state),
+        ...nextRoute,
+        draftBaseline: action.draftBaseline ?? state.draftBaseline,
+        fitRequest: action.fitToRoute ? state.fitRequest + 1 : state.fitRequest,
+      }, nextRoute)
+    }
+    case 'naming/set-mode':
+      return action.mode === state.namingMode ? state : { ...withHistory(state), namingMode: action.mode }
     case 'labels/input-set':
       return {
         ...state,
@@ -278,7 +263,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     case 'routes/add-route': {
       const nextState = withHistory(state)
-      const mergedRoutes = mergeLoadedRoutesByCoordinate([...nextState.loadedRoutes, action.route])
+      const mergedRoutes = mergeLoadedRoutesByCoordinate([...nextState.loadedRoutes, action.route], state.namingMode)
       const activeRoute = mergedRoutes.find((route) => route.id === action.route.id) ?? mergedRoutes.at(-1)
 
       if (!activeRoute) {
@@ -299,7 +284,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const nextState = withHistory(state)
 
       if (!nextState.activeRouteId || nextState.loadedRoutes.length === 0) {
-        const mergedRoutes = mergeLoadedRoutesByCoordinate([action.route])
+        const mergedRoutes = mergeLoadedRoutesByCoordinate([action.route], state.namingMode)
         const [activeRoute] = mergedRoutes
 
         return {
@@ -316,7 +301,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const replacedRoutes = nextState.loadedRoutes.map((route) =>
         route.id === nextState.activeRouteId ? action.route : route,
       )
-      const mergedRoutes = mergeLoadedRoutesByCoordinate(replacedRoutes)
+      const mergedRoutes = mergeLoadedRoutesByCoordinate(replacedRoutes, state.namingMode)
       const activeRoute = mergedRoutes.find((route) => route.id === action.route.id)
 
       if (!activeRoute) {
@@ -361,7 +346,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const waypoint = state.waypoints.find((candidate) => candidate.id === action.waypointId)
       const trimmedLabel = action.nextLabel.trim()
 
-      if (!waypoint || !trimmedLabel) {
+      if (!waypoint || !trimmedLabel || trimmedLabel === waypoint.label) {
         return state
       }
 
@@ -389,6 +374,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         const targetIndexes = route.waypoints.reduce<number[]>((indexes, candidate, index) => {
           const isActiveEditedWaypoint = route.id === previousState.activeRouteId && candidate.id === action.waypointId
           const isConnectedInterchange =
+            previousState.namingMode === 'shared' &&
             route.id !== previousState.activeRouteId &&
             !candidate.hidden &&
             sameCoordinate(candidate.lat, candidate.lon, waypoint.lat, waypoint.lon)
@@ -422,9 +408,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
 
         return {
           ...route,
-          waypoints: nextWaypoints,
-          issues: validateRoute(nextWaypoints),
-          inputText: exportWpt(nextWaypoints),
+          ...editRouteDocument(route, nextWaypoints),
         }
       })
 
@@ -447,6 +431,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
 
       const nextAltLabels = action.altLabels.map((label) => label.trim()).filter(Boolean)
+      if (state.waypoints.find((candidate) => candidate.id === action.waypointId)?.altLabels.join(' ') === nextAltLabels.join(' ')) return state
       const waypoints = state.waypoints.map((candidate) =>
         candidate.id === action.waypointId
           ? {
@@ -537,9 +522,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         hasAnyUpdate = true
         return {
           ...route,
-          waypoints: nextWaypoints,
-          issues: validateRoute(nextWaypoints),
-          inputText: exportWpt(nextWaypoints),
+          ...editRouteDocument(route, nextWaypoints),
         }
       })
 
@@ -566,9 +549,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return {
         ...previousState,
         loadedRoutes: nextLoadedRoutes,
-        waypoints: activeRoute ? activeRoute.waypoints : nextWaypoints,
-        issues: activeRoute ? activeRoute.issues : validateRoute(nextWaypoints),
-        inputText: activeRoute ? activeRoute.inputText : exportWpt(nextWaypoints),
+        ...(activeRoute ?? editRouteDocument(previousState, nextWaypoints)),
       }
     }
     case 'route/delete-waypoint': {
@@ -659,12 +640,13 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
 
       const nextState = withHistory(state)
-      return {
+      return syncActiveRoute({
         ...nextState,
         inputText: '',
+        draftBaseline: null,
         waypoints: [],
         issues: [],
-      }
+      }, { inputText: '', waypoints: [], issues: [] })
     }
     case 'history/undo': {
       const previous = state.history.at(-1)
@@ -676,11 +658,13 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return {
         ...state,
         inputText: previous.inputText,
+        draftBaseline: previous.draftBaseline,
         waypoints: previous.waypoints,
         issues: previous.issues,
         loadedLabelSet: previous.loadedLabelSet,
         loadedRoutes: previous.loadedRoutes,
         activeRouteId: previous.activeRouteId,
+        namingMode: previous.namingMode,
         history: state.history.slice(0, -1),
       }
     }
@@ -689,7 +673,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         return state
       }
 
-      const mergedRoutes = mergeLoadedRoutesByCoordinate(action.routes)
+      const mergedRoutes = mergeLoadedRoutesByCoordinate(action.routes, state.namingMode)
 
       const nextState = withHistory(state)
       const [activeRoute] = mergedRoutes
@@ -710,7 +694,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
 
       const nextState = withHistory(state)
-      const mergedRoutes = mergeLoadedRoutesByCoordinate([...nextState.loadedRoutes, ...action.routes])
+      const mergedRoutes = mergeLoadedRoutesByCoordinate([...nextState.loadedRoutes, ...action.routes], state.namingMode)
       const activeRoute = mergedRoutes.find((route) => route.id === action.routes[0].id)
 
       if (!activeRoute) {
@@ -734,27 +718,16 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         return state
       }
 
-      // Flush the current textarea content back to the outgoing route before switching
-      const loadedRoutesWithFlushedInput = state.activeRouteId
-        ? state.loadedRoutes.map((route) =>
-            route.id === state.activeRouteId
-              ? { ...route, inputText: state.inputText }
-              : route,
-          )
-        : state.loadedRoutes
-
-      const flushedNextActiveRoute = loadedRoutesWithFlushedInput.find((r) => r.id === action.routeId)!
-
       return {
         ...state,
-        loadedRoutes: loadedRoutesWithFlushedInput,
-        activeRouteId: flushedNextActiveRoute.id,
-        inputText: flushedNextActiveRoute.inputText,
-        waypoints: flushedNextActiveRoute.waypoints,
-        issues: flushedNextActiveRoute.issues,
+        activeRouteId: nextActiveRoute.id,
+        inputText: nextActiveRoute.inputText,
+        waypoints: nextActiveRoute.waypoints,
+        issues: nextActiveRoute.issues,
         fitRequest: state.fitRequest + 1,
       }
     }
+
     case 'routes/rename': {
       if (!state.loadedRoutes.some((route) => route.id === action.routeId)) {
         return state
@@ -789,6 +762,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           loadedRoutes: [],
           activeRouteId: null,
           inputText: '',
+          draftBaseline: null,
           waypoints: [],
           issues: [],
           fitRequest: state.fitRequest,
@@ -845,5 +819,24 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
     default:
       return state
+  }
+}
+
+export function editorReducer(state: EditorState, action: EditorAction): EditorState {
+  const nextState = reduceEditor(state, action)
+  if (nextState === state || nextState.namingMode === 'independent' || action.type === 'history/undo') return nextState
+  const preferActive = action.type === 'input/set' || action.type.startsWith('route/')
+  const orderedRoutes = preferActive
+    ? [...nextState.loadedRoutes.filter((route) => route.id === nextState.activeRouteId),
+       ...nextState.loadedRoutes.filter((route) => route.id !== nextState.activeRouteId)]
+    : nextState.loadedRoutes
+  const merged = mergeLoadedRoutesByCoordinate(orderedRoutes, nextState.namingMode)
+  const byId = new Map(merged.map((route) => [route.id, route]))
+  const loadedRoutes = nextState.loadedRoutes.map((route) => byId.get(route.id) ?? route)
+  const activeRoute = loadedRoutes.find((route) => route.id === nextState.activeRouteId)
+  return {
+    ...nextState,
+    loadedRoutes,
+    ...(activeRoute ? { inputText: activeRoute.inputText, waypoints: activeRoute.waypoints, issues: activeRoute.issues } : {}),
   }
 }

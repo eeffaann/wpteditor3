@@ -2,9 +2,10 @@ import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { CircleMarker, MapContainer, Marker, Polygon, Polyline, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import { CircleMarker as LeafletCircleMarker, LatLngBounds, divIcon } from 'leaflet'
 import type { ParseIssue, Waypoint } from '../editor/editorTypes'
-import { exportWaypointLine } from '../wpt/exportWpt'
+import { sameCoordinate, toCoordinateKey, toMercatorPoint } from '../wpt/geometry'
+import { WaypointPopupContent } from './WaypointPopup'
 
-type RouteMapProps = {
+export type RouteMapProps = {
   waypoints: Waypoint[]
   activeRouteFilename: string | null
   backgroundRoutes: {
@@ -78,10 +79,7 @@ type MercatorPoint = {
 }
 
 function convertLLToMercXY(waypoint: Waypoint): MercatorPoint {
-  return {
-    x: waypoint.lon / 360 + 0.5,
-    y: 0.5 * Math.log(Math.tan(Math.PI / 4 - (Math.PI / 360) * waypoint.lat)) / Math.PI + 0.5,
-  }
+  return toMercatorPoint(waypoint.lat, waypoint.lon)
 }
 
 function convertMercXYToLL(point: MercatorPoint): [number, number] {
@@ -89,14 +87,6 @@ function convertMercXYToLL(point: MercatorPoint): [number, number] {
     (360 / Math.PI) * (Math.PI / 4 - Math.atan(Math.exp(2 * Math.PI * (point.y - 0.5)))),
     360 * (point.x - 0.5),
   ]
-}
-
-function toCoordinateKey(lat: number, lon: number) {
-  return `${lat.toFixed(6)},${lon.toFixed(6)}`
-}
-
-function sameCoordinate(lat1: number, lon1: number, lat2: number, lon2: number) {
-  return toCoordinateKey(lat1, lon1) === toCoordinateKey(lat2, lon2)
 }
 
 function calcHighlightLines(waypoints: Waypoint[], pixelThickness: number) {
@@ -337,17 +327,17 @@ function WaypointDragHandler({
 
   useEffect(() => {
     if (!isDragging) {
-      map.dragging.enable()
-      map.doubleClickZoom.enable()
       return
     }
 
+    const wasDraggingEnabled = map.dragging.enabled()
+    const wasDoubleClickZoomEnabled = map.doubleClickZoom.enabled()
     map.dragging.disable()
     map.doubleClickZoom.disable()
 
     return () => {
-      map.dragging.enable()
-      map.doubleClickZoom.enable()
+      if (wasDraggingEnabled) map.dragging.enable()
+      if (wasDoubleClickZoomEnabled) map.doubleClickZoom.enable()
     }
   }, [isDragging, map])
 
@@ -369,165 +359,6 @@ function WaypointDragHandler({
   })
 
   return null
-}
-
-function WaypointPopupContent({
-  waypoint,
-  onRenameWaypoint,
-  onSetAltLabels,
-  onToggleWaypointKind,
-  onDeleteWaypoint,
-  issueCodes,
-}: Pick<RouteMapProps, 'onRenameWaypoint' | 'onSetAltLabels' | 'onToggleWaypointKind' | 'onDeleteWaypoint'> & {
-  waypoint: Waypoint
-  issueCodes: string[]
-}) {
-  const map = useMap()
-  const [draftLabel, setDraftLabel] = useState(waypoint.label)
-  const [draftAltLabels, setDraftAltLabels] = useState(waypoint.altLabels.join(' '))
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
-
-  const waypointLine = useMemo(() => exportWaypointLine(waypoint), [waypoint])
-
-  useEffect(() => {
-    setDraftLabel(waypoint.label)
-  }, [waypoint.label])
-
-  useEffect(() => {
-    setDraftAltLabels(waypoint.altLabels.join(' '))
-  }, [waypoint.altLabels])
-
-  useEffect(() => {
-    setCopyStatus('idle')
-  }, [waypointLine])
-
-  function commitLabel() {
-    const nextLabel = draftLabel.trim()
-    if (!nextLabel || nextLabel === waypoint.label) {
-      return
-    }
-
-    onRenameWaypoint(waypoint.id, nextLabel)
-  }
-
-  function commitAltLabels() {
-    const nextAltLabels = draftAltLabels
-      .split(/\s+/)
-      .map((label) => label.trim())
-      .filter(Boolean)
-
-    if (nextAltLabels.join(' ') === waypoint.altLabels.join(' ')) {
-      return
-    }
-
-    onSetAltLabels(waypoint.id, nextAltLabels)
-  }
-
-  async function handleCopyWaypointLine() {
-    try {
-      await navigator.clipboard.writeText(waypointLine)
-      setCopyStatus('copied')
-    } catch {
-      setCopyStatus('idle')
-    }
-  }
-
-  function stopEventPropagation(event: { stopPropagation: () => void }) {
-    event.stopPropagation()
-  }
-
-  function handleLabelKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Enter') {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    commitLabel()
-    map.closePopup()
-  }
-
-  function handleAltLabelsKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== 'Enter') {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    commitAltLabels()
-    map.closePopup()
-  }
-
-  return (
-    <div
-      className="waypoint-popup"
-      onClick={stopEventPropagation}
-      onDoubleClick={stopEventPropagation}
-      onMouseDown={stopEventPropagation}
-    >
-      <div className="waypoint-popup-subheader">{waypoint.hidden ? 'Geometry node' : 'Station'}</div>
-      <div className="waypoint-popup-title-row">
-        <input
-          className="waypoint-popup-title-input"
-          type="text"
-          value={draftLabel}
-          autoFocus
-          onChange={(event) => setDraftLabel(event.target.value)}
-          onBlur={commitLabel}
-          onKeyDown={handleLabelKeyDown}
-          onClick={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.stopPropagation()}
-        />
-      </div>
-      {issueCodes.length > 0 ? <div className="waypoint-popup-issues">{issueCodes.join(' · ')}</div> : null}
-      <label className="waypoint-popup-field">
-        <span>Alt labels</span>
-        <input
-          className="waypoint-popup-field-input"
-          type="text"
-          value={draftAltLabels}
-          placeholder="Alt labels separated by spaces"
-          onChange={(event) => setDraftAltLabels(event.target.value)}
-          onBlur={commitAltLabels}
-          onKeyDown={handleAltLabelsKeyDown}
-          onClick={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.stopPropagation()}
-        />
-      </label>
-      <p>{`${waypoint.lat.toFixed(6)}, ${waypoint.lon.toFixed(6)}`}</p>
-      <div className="waypoint-popup-action-row">
-        <button
-          type="button"
-          className="waypoint-copy-button waypoint-convert-button"
-          onMouseDown={stopEventPropagation}
-          onClick={() => onToggleWaypointKind(waypoint.id)}
-        >
-          {waypoint.hidden ? 'Convert to Station' : 'Convert to Geometry Node'}
-        </button>
-        <button
-          type="button"
-          className="waypoint-copy-button"
-          aria-label="Delete waypoint"
-          title="Delete waypoint"
-          onMouseDown={stopEventPropagation}
-          onClick={() => onDeleteWaypoint(waypoint.id)}
-        >
-          🗑
-        </button>
-        <button
-          type="button"
-          className="waypoint-copy-button"
-          aria-label="Copy waypoint line"
-          title="Copy waypoint line"
-          onMouseDown={stopEventPropagation}
-          onClick={handleCopyWaypointLine}
-        >
-          🔗
-        </button>
-      </div>
-      {copyStatus === 'copied' ? <span className="waypoint-copy-status">Copied</span> : null}
-    </div>
-  )
 }
 
 function BackgroundStationPopupContent({
@@ -693,7 +524,6 @@ export const RouteMap = memo(function RouteMap({
     }
 
     marker.openPopup()
-    setPendingPopupWaypointId(null)
   }, [pendingPopupWaypointId, waypoints])
 
   const stationGroups = useMemo(() => {
@@ -826,14 +656,15 @@ export const RouteMap = memo(function RouteMap({
 
   const inUseLabelSet = useMemo(() => new Set(inUseLabels), [inUseLabels])
   const issueMap = useMemo(() => {
-    const nextMap = new Map<number, string[]>()
+    const nextMap = new Map<string, string[]>()
 
     for (const issue of issues) {
-      const codes = nextMap.get(issue.lineNumber) ?? []
+      if (!issue.waypointId) continue
+      const codes = nextMap.get(issue.waypointId) ?? []
       if (!codes.includes(issue.message)) {
         codes.push(issue.message)
       }
-      nextMap.set(issue.lineNumber, codes)
+      nextMap.set(issue.waypointId, codes)
     }
 
     return nextMap
@@ -1026,7 +857,7 @@ export const RouteMap = memo(function RouteMap({
           }
 
           const isInUse = inUseLabelSet.has(waypoint.label)
-          const issueCodes = issueMap.get(index + 1) ?? []
+          const issueCodes = issueMap.get(waypoint.id) ?? []
           const stationRadius = waypoint.hidden ? 5 : Math.max(7, Math.min(14, lineWeight + 3))
           const coordinateKey = toCoordinateKey(waypoint.lat, waypoint.lon)
           const isInterchange = sharedWithBackgroundCoordinateKeys.has(coordinateKey)
@@ -1113,7 +944,10 @@ export const RouteMap = memo(function RouteMap({
                     </Tooltip>
                     <Popup
                       eventHandlers={{
-                        add: () => setOpenPopupId(waypoint.id),
+                        add: () => {
+                          setOpenPopupId(waypoint.id)
+                          setPendingPopupWaypointId(null)
+                        },
                         remove: () => setOpenPopupId((prev) => prev === waypoint.id ? null : prev),
                       }}
                     >

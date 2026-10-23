@@ -13,10 +13,9 @@ function parseCoordinatesFromUrl(urlText: string): { lat: number; lon: number } 
       return null
     }
 
-    return {
-      lat: Number(lat),
-      lon: Number(lon),
-    }
+    const coordinates = { lat: Number(lat), lon: Number(lon) }
+    return Number.isFinite(coordinates.lat) && Number.isFinite(coordinates.lon) &&
+      Math.abs(coordinates.lat) <= 90 && Math.abs(coordinates.lon) <= 180 ? coordinates : null
   } catch {
     return null
   }
@@ -28,13 +27,14 @@ function buildWaypoint(label: string, altLabels: string[], url: string, lineNumb
   if (!coordinates) {
     return {
       lineNumber,
-      message: 'Expected an OpenStreetMap URL with numeric lat and lon query parameters.',
+      message: 'Expected an OpenStreetMap URL with numeric lat (-90 to 90) and lon (-180 to 180) query parameters.',
       content: `${label} ${url}`,
     }
   }
 
   return {
     id: `${lineNumber}-${label}`,
+    sourceLine: lineNumber,
     label,
     altLabels,
     lat: coordinates.lat,
@@ -63,7 +63,7 @@ export function parseWpt(inputText: string): ParsedRoute {
       const url = parts.at(-1) ?? ''
       const altLabels = parts.length > 2 ? parts.slice(1, -1) : []
 
-      if (!label || !url) {
+      if (parts.length < 2 || !label || !url) {
         issues.push({
           lineNumber,
           message: 'Each line must contain a label followed by a URL.',
@@ -75,7 +75,7 @@ export function parseWpt(inputText: string): ParsedRoute {
       const waypointOrIssue = buildWaypoint(label, altLabels, url, lineNumber)
 
       if ('message' in waypointOrIssue) {
-        issues.push(waypointOrIssue)
+        issues.push({ ...waypointOrIssue, content: rawLine })
         return
       }
 
