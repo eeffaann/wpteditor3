@@ -2,6 +2,7 @@ export type EditorLayout = 'wide' | 'stacked'
 
 export type Waypoint = {
   id: string
+  sourceLine?: number
   label: string
   altLabels: string[]
   lat: number
@@ -12,6 +13,7 @@ export type Waypoint = {
 
 export type ParseIssue = {
   lineNumber: number
+  waypointId?: string
   message: string
   content: string
 }
@@ -36,6 +38,7 @@ export type EditorSnapshot = {
   loadedLabelSet: string[]
   loadedRoutes: LoadedRoute[]
   activeRouteId: string | null
+  namingMode: 'shared' | 'independent'
 }
 
 export type EditorState = {
@@ -50,10 +53,12 @@ export type EditorState = {
   loadedRoutes: LoadedRoute[]
   activeRouteId: string | null
   history: EditorSnapshot[]
+  namingMode: 'shared' | 'independent'
 }
 
 export type EditorAction =
-  | { type: 'input/set'; value: string }
+  | { type: 'input/set'; value: string; fitToRoute?: boolean }
+  | { type: 'naming/set-mode'; mode: EditorState['namingMode'] }
   | { type: 'labels/input-set'; value: string }
   | { type: 'route/load'; fitToRoute: boolean; route: ParsedRoute }
   | { type: 'routes/add-route'; route: LoadedRoute }

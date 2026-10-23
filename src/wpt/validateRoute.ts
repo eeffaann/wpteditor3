@@ -1,5 +1,6 @@
 import type { ParseIssue, Waypoint } from '../editor/editorTypes'
 import { exportWaypointLine } from './exportWpt'
+import { mileage } from './geometry'
 
 function isVisible(label: string) {
   return !(label.startsWith('+') || label.startsWith('*+'))
@@ -11,20 +12,6 @@ function reduceLabel(label: string) {
 
 function countCharacter(text: string, character: string) {
   return text.split(character).length - 1
-}
-
-function mileage(lat1: number, lon1: number, lat2: number, lon2: number) {
-  if (lat1 === lat2 && lon1 === lon2) {
-    return 0
-  }
-
-  const earthRadiusMiles = 3963
-  const deg2rad = Math.PI / 180
-  const angle =
-    Math.cos(lat1 * deg2rad) * Math.cos(lat2 * deg2rad) * Math.cos((lon1 - lon2) * deg2rad) +
-    Math.sin(lat1 * deg2rad) * Math.sin(lat2 * deg2rad)
-
-  return Math.acos(Math.min(1, Math.max(-1, angle))) * 1.02112 * earthRadiusMiles
 }
 
 function buildIssueCollector(waypoints: Waypoint[]) {
@@ -41,7 +28,8 @@ function buildIssueCollector(waypoints: Waypoint[]) {
       .sort((left, right) => left[0] - right[0])
       .flatMap(([lineNumber, codes]) =>
         Array.from(codes).map((code) => ({
-          lineNumber,
+          lineNumber: waypoints[lineNumber - 1].sourceLine ?? lineNumber,
+          waypointId: waypoints[lineNumber - 1].id,
           message: code,
           content: exportWaypointLine(waypoints[lineNumber - 1]),
         })),
@@ -62,7 +50,7 @@ export function validateRoute(waypoints: Waypoint[]): ParseIssue[] {
     const labels = [waypoint.label, ...waypoint.altLabels]
     const visible = isVisible(waypoint.label)
 
-    if (/^\*?I\-[0-9]+[EWCNS]?Bus/i.test(waypoint.label)) {
+    if (/^\*?I-[0-9]+[EWCNS]?Bus/i.test(waypoint.label)) {
       issues.add(lineNumber, 'BUS_WITH_I')
     }
 
@@ -85,7 +73,7 @@ export function validateRoute(waypoints: Waypoint[]): ParseIssue[] {
     coordLines.push(lineNumber)
     duplicateCoords.set(coordsKey, coordLines)
 
-    const labelPattern = /^\+?\*?[a-zA-Z0-9()\/_\-.]+$/
+    const labelPattern = /^\+?\*?[a-zA-Z0-9()/_\-.]+$/
     if (!labelPattern.test(waypoint.label) || waypoint.altLabels.some((altLabel) => !labelPattern.test(altLabel))) {
       issues.add(lineNumber, 'LABEL_INVALID_CHAR')
     }
@@ -206,7 +194,7 @@ export function validateRoute(waypoints: Waypoint[]): ParseIssue[] {
 
     if (duplicatePrevious || duplicateNext) {
       issues.add(index + 1, 'BAD_ANGLE')
-      break
+      continue
     }
 
     const x0 = Math.cos(previousWaypoint.lon * deg2rad) * Math.cos(previousWaypoint.lat * deg2rad)
@@ -226,7 +214,7 @@ export function validateRoute(waypoints: Waypoint[]): ParseIssue[] {
 
     if (denominator === 0) {
       issues.add(index + 1, 'BAD_ANGLE')
-      break
+      continue
     }
 
     const angle = (180 / Math.PI) * Math.acos(Math.min(1, Math.max(-1, numerator / denominator)))

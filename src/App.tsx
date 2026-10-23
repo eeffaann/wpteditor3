@@ -1,24 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, startTransition, type ChangeEvent, type ClipboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition, type ChangeEvent } from 'react'
 import './App.css'
-import { editorReducer, initialEditorState } from './editor/editorReducer'
+import { useEditorSession } from './editor/useEditorSession'
+import { isRouteDirty } from './editor/editorRecovery'
+import { collectWptFileHandles, errorMessage, writeRouteFile, type RouteFileHandle, type RoutePickerWindow } from './editor/routeFiles'
 import type { LoadedRoute } from './editor/editorTypes'
 import { RouteMap } from './map/RouteMap'
-import { exportWpt } from './wpt/exportWpt'
 import { parseWpt } from './wpt/parseWpt'
-
-function mileage(lat1: number, lon1: number, lat2: number, lon2: number) {
-  if (lat1 === lat2 && lon1 === lon2) {
-    return 0
-  }
-
-  const earthRadiusMiles = 3963
-  const deg2rad = Math.PI / 180
-  const angle =
-    Math.cos(lat1 * deg2rad) * Math.cos(lat2 * deg2rad) * Math.cos((lon1 - lon2) * deg2rad) +
-    Math.sin(lat1 * deg2rad) * Math.sin(lat2 * deg2rad)
-
-  return Math.acos(Math.min(1, Math.max(-1, angle))) * 1.02112 * earthRadiusMiles
-}
+import { RouteTable } from './editor/RouteTable'
 
 function renderRouteSourceHighlight(inputText: string) {
   const lines = inputText.split('\n')
@@ -41,39 +29,10 @@ function renderRouteSourceHighlight(inputText: string) {
   })
 }
 
-type FileSystemWritableFileStreamLike = {
-  write: (data: string) => Promise<void>
-  close: () => Promise<void>
-}
-
-type FileSystemFileHandleLike = {
-  kind: 'file'
-  name: string
-  getFile: () => Promise<File>
-  createWritable: () => Promise<FileSystemWritableFileStreamLike>
-}
-
-type FileSystemDirectoryHandleLike = {
-  kind: 'directory'
-  name: string
-  values: () => AsyncIterable<FileSystemFileHandleLike | FileSystemDirectoryHandleLike>
-}
-
-type DirectoryPickerWindow = Window & {
-  showDirectoryPicker?: () => Promise<FileSystemDirectoryHandleLike>
-  showSaveFilePicker?: (options?: {
-    suggestedName?: string
-    types?: Array<{
-      description?: string
-      accept: Record<string, string[]>
-    }>
-  }) => Promise<FileSystemFileHandleLike>
-}
-
-function buildLoadedRoute(filename: string, inputText: string, index: number): LoadedRoute {
+function buildLoadedRoute(filename: string, inputText: string): LoadedRoute {
   const parsedRoute = parseWpt(inputText)
   return {
-    id: `${filename}-${Date.now()}-${index}`,
+    id: crypto.randomUUID(),
     filename,
     inputText,
     waypoints: parsedRoute.waypoints,
@@ -81,47 +40,23 @@ function buildLoadedRoute(filename: string, inputText: string, index: number): L
   }
 }
 
-async function collectWptFileHandles(
-  directoryHandle: FileSystemDirectoryHandleLike,
-  prefix = '',
-): Promise<Array<{ relativePath: string; handle: FileSystemFileHandleLike }>> {
-  const routes: Array<{ relativePath: string; handle: FileSystemFileHandleLike }> = []
-
-  for await (const entry of directoryHandle.values()) {
-    if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.wpt')) {
-      routes.push({
-        relativePath: prefix ? `${prefix}/${entry.name}` : entry.name,
-        handle: entry,
-      })
-      continue
-    }
-
-    if (entry.kind === 'directory') {
-      routes.push(...(await collectWptFileHandles(entry, prefix ? `${prefix}/${entry.name}` : entry.name)))
-    }
-  }
-
-  return routes.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
-}
-
 function App() {
-  const [state, dispatch] = useReducer(editorReducer, initialEditorState)
-  const [draggedWaypointId, setDraggedWaypointId] = useState<string | null>(null)
+  const { state, dispatch, savedSources, markSaved, status: fileSaveStatus, setStatus: setFileSaveStatus } = useEditorSession()
   const [focusedWaypointId, setFocusedWaypointId] = useState<string | null>(null)
   const [focusRequest, setFocusRequest] = useState(0)
-  const [distanceUnit, setDistanceUnit] = useState<'mi' | 'km'>('mi')
   const [mapWrapperHeight, setMapWrapperHeight] = useState<number | null>(null)
   const routeSourceRef = useRef<HTMLTextAreaElement | null>(null)
   const routeSourceHighlightRef = useRef<HTMLPreElement | null>(null)
   const routeTableShellRef = useRef<HTMLDivElement | null>(null)
   const folderInputRef = useRef<HTMLInputElement | null>(null)
   const mapWrapperRef = useRef<HTMLElement | null>(null)
-  const routeFileHandlesRef = useRef(new Map<string, FileSystemFileHandleLike>())
+  const routeFileHandlesRef = useRef(new Map<string, { handle: RouteFileHandle; filename: string }>())
+  const savingRouteIdsRef = useRef(new Set<string>())
+  const [savingRouteIds, setSavingRouteIds] = useState<Set<string>>(new Set())
   const pendingTableHoverScrollFrameRef = useRef<number | null>(null)
   const pendingSourceHoverScrollFrameRef = useRef<number | null>(null)
   const lastHoveredWaypointIdRef = useRef<string | null>(null)
   const lastHoveredRouteRowRef = useRef<number | null>(null)
-  const [fileSaveStatus, setFileSaveStatus] = useState<string | null>(null)
 
   useEffect(() => {
     const folderInput = folderInputRef.current
@@ -183,46 +118,6 @@ function App() {
 
   const lineWeight = 4
 
-  const routeRows = useMemo(() => {
-    let totalDistance = 0
-    const issueMap = new Map<number, string[]>()
-
-    for (const issue of state.issues) {
-      const issueCodes = issueMap.get(issue.lineNumber) ?? []
-      if (!issueCodes.includes(issue.message)) {
-        issueCodes.push(issue.message)
-      }
-      issueMap.set(issue.lineNumber, issueCodes)
-    }
-
-    return state.waypoints.map((waypoint, index) => {
-      const segmentDistance =
-        index === 0
-          ? 0
-          : mileage(
-              state.waypoints[index - 1].lat,
-              state.waypoints[index - 1].lon,
-              waypoint.lat,
-              waypoint.lon,
-            )
-
-      totalDistance += segmentDistance
-
-      return {
-        id: waypoint.id,
-        index,
-        label: waypoint.label,
-        altLabels: waypoint.altLabels,
-        issues: issueMap.get(index + 1) ?? [],
-        hidden: waypoint.hidden,
-        lat: waypoint.lat.toFixed(6),
-        lon: waypoint.lon.toFixed(6),
-        segmentDistanceMiles: segmentDistance,
-        totalDistanceMiles: totalDistance,
-      }
-    })
-  }, [state.issues, state.waypoints])
-
   const backgroundRoutes = useMemo(
     () =>
       state.loadedRoutes
@@ -267,9 +162,9 @@ function App() {
     return trimmed.toLowerCase().endsWith('.wpt') ? trimmed : `${trimmed}.wpt`
   }
 
-  function canSaveRouteToFile(routeId: string) {
-    const pickerWindow = window as DirectoryPickerWindow
-    return routeFileHandlesRef.current.has(routeId) || typeof pickerWindow.showSaveFilePicker === 'function'
+  function canSaveRouteToFile() {
+    const pickerWindow = window as RoutePickerWindow
+    return typeof pickerWindow.showSaveFilePicker === 'function'
   }
 
   function handleAddRoute() {
@@ -279,14 +174,15 @@ function App() {
     }
 
     const parsedRoute = parseWpt(state.inputText)
-    const routeId = `${nextGeneratedRouteFilename()}-${Date.now()}`
+    const filename = nextGeneratedRouteFilename()
+    const routeId = crypto.randomUUID()
 
     startTransition(() => {
       dispatch({
         type: 'routes/add-route',
         route: {
           id: routeId,
-          filename: routeId.slice(0, routeId.lastIndexOf('-')),
+          filename,
           inputText: state.inputText,
           waypoints: parsedRoute.waypoints,
           issues: parsedRoute.issues,
@@ -304,7 +200,7 @@ function App() {
     const parsedRoute = parseWpt(state.inputText)
     const activeRoute = state.loadedRoutes.find((route) => route.id === state.activeRouteId)
     const filename = activeRoute?.filename ?? nextGeneratedRouteFilename()
-    const routeId = activeRoute?.id ?? `${filename}-${Date.now()}`
+    const routeId = activeRoute?.id ?? crypto.randomUUID()
 
     startTransition(() => {
       dispatch({
@@ -321,7 +217,7 @@ function App() {
   }
 
   function handleSaveToTab() {
-    const text = state.waypoints.length > 0 ? exportWpt(state.waypoints) : state.inputText.trim()
+    const text = state.inputText
 
     if (!text) {
       return
@@ -416,28 +312,6 @@ function App() {
     setFocusRequest((current) => current + 1)
   }
 
-  function handleRouteSourcePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const pastedText = event.clipboardData.getData('text')
-
-    if (!pastedText) {
-      return
-    }
-
-    event.preventDefault()
-
-    const textarea = routeSourceRef.current
-    const selectionStart = textarea?.selectionStart ?? state.inputText.length
-    const selectionEnd = textarea?.selectionEnd ?? state.inputText.length
-    const nextInputText =
-      state.inputText.slice(0, selectionStart) + pastedText + state.inputText.slice(selectionEnd)
-    const fitToRoute = state.waypoints.length === 0
-
-    dispatch({ type: 'input/set', value: nextInputText })
-    startTransition(() => {
-      dispatch({ type: 'route/load', fitToRoute, route: parseWpt(nextInputText) })
-    })
-  }
-
   function handleRouteSourceScroll() {
     const textarea = routeSourceRef.current
     const highlight = routeSourceHighlightRef.current
@@ -492,28 +366,32 @@ function App() {
   }
 
   async function handleFolderInputChange(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? [])
+    const input = event.currentTarget
+    const files = Array.from(input.files ?? [])
       .filter((file) => file.name.toLowerCase().endsWith('.wpt'))
-      .sort((left, right) => left.name.localeCompare(right.name))
+      .sort((left, right) => (left.webkitRelativePath || left.name).localeCompare(right.webkitRelativePath || right.name))
 
     if (files.length === 0) {
       return
     }
 
-    const routes = await Promise.all(files.map(async (file, index) => buildLoadedRoute(file.name, await file.text(), index + 1)))
-
-    startTransition(() => {
+    try {
+      const routes = await Promise.all(files.map(async (file) =>
+        buildLoadedRoute(file.webkitRelativePath || file.name, await file.text())))
+      for (const route of routes) markSaved(route.id, route.filename, route.inputText)
       dispatch({ type: 'routes/add-folder', routes })
-    })
-
-    setFileSaveStatus('Added folder via browser file input. Save-back to source files is unavailable for these routes.')
-    setFocusedWaypointId(null)
-    setFocusRequest(0)
-    event.target.value = ''
+      setFileSaveStatus('Added folder. Direct save-back is unavailable for these routes; use Save As or Download. Shared-name mode may mark imported routes as modified.')
+      setFocusedWaypointId(null)
+      setFocusRequest(0)
+    } catch (error) {
+      setFileSaveStatus(`Unable to read folder: ${errorMessage(error)}`)
+    } finally {
+      input.value = ''
+    }
   }
 
   async function handleAddFolder() {
-    const pickerWindow = window as DirectoryPickerWindow
+    const pickerWindow = window as RoutePickerWindow
 
     if (!pickerWindow.showDirectoryPicker) {
       folderInputRef.current?.click()
@@ -530,18 +408,16 @@ function App() {
       }
 
       const routes = await Promise.all(
-        fileEntries.map(async ({ relativePath, handle }, index) => {
-          const route = buildLoadedRoute(relativePath, await (await handle.getFile()).text(), index + 1)
-          routeFileHandlesRef.current.set(route.id, handle)
-          return route
+        fileEntries.map(async ({ relativePath, handle }) => {
+          return { route: buildLoadedRoute(relativePath, await (await handle.getFile()).text()), handle }
         }),
       )
-
-      startTransition(() => {
-        dispatch({ type: 'routes/add-folder', routes })
-      })
-
-      setFileSaveStatus(`Added ${routes.length} file-backed route${routes.length === 1 ? '' : 's'} from folder.`)
+      for (const { route, handle } of routes) {
+        routeFileHandlesRef.current.set(route.id, { handle, filename: route.filename })
+        markSaved(route.id, route.filename, route.inputText)
+      }
+      dispatch({ type: 'routes/add-folder', routes: routes.map(({ route }) => route) })
+      setFileSaveStatus(`Added ${routes.length} file-backed route${routes.length === 1 ? '' : 's'}. Shared-name mode may mark imported routes as modified.`)
       setFocusedWaypointId(null)
       setFocusRequest(0)
     } catch (error) {
@@ -549,7 +425,7 @@ function App() {
         return
       }
 
-      setFileSaveStatus('Unable to open folder for file-backed editing in this browser.')
+      setFileSaveStatus(`Unable to open folder: ${errorMessage(error)}`)
     }
   }
 
@@ -575,13 +451,7 @@ function App() {
       return
     }
 
-    const hadFileHandle = routeFileHandlesRef.current.has(routeId)
-    if (hadFileHandle) {
-      routeFileHandlesRef.current.delete(routeId)
-      setFileSaveStatus(`Renamed ${route.filename} to ${filename}. Save will use Save As next time.`)
-    } else {
-      setFileSaveStatus(`Renamed ${route.filename} to ${filename}.`)
-    }
+    setFileSaveStatus(`Renamed ${route.filename} to ${filename}. Save will use Save As next time.`)
 
     startTransition(() => {
       dispatch({ type: 'routes/rename', routeId, filename })
@@ -589,7 +459,7 @@ function App() {
   }
 
   function handleRemoveRoute(routeId: string) {
-    routeFileHandlesRef.current.delete(routeId)
+    if (isRouteDirty(state, savedSources, routeId) && !window.confirm('Remove this route with unsaved changes? You can undo removal during this session.')) return
     startTransition(() => {
       dispatch({ type: 'routes/remove', routeId })
     })
@@ -599,24 +469,20 @@ function App() {
 
   async function handleSaveRouteToFile(routeId: string) {
     const route = state.loadedRoutes.find((candidate) => candidate.id === routeId)
-    let handle = routeFileHandlesRef.current.get(routeId)
-
-    if (!route) {
-      setFileSaveStatus('That route could not be found.')
-      return
-    }
-
-    if (!handle) {
-      const pickerWindow = window as DirectoryPickerWindow
-
-      if (typeof pickerWindow.showSaveFilePicker !== 'function') {
-        setFileSaveStatus('This browser cannot save that route directly. Use a Chromium-based browser or Save to Tab.')
-        return
-      }
-
-      try {
+    if (!route || savingRouteIdsRef.current.has(routeId)) return
+    savingRouteIdsRef.current.add(routeId)
+    setSavingRouteIds(new Set(savingRouteIdsRef.current))
+    try {
+      const entry = routeFileHandlesRef.current.get(routeId)
+      let handle = entry?.filename === route.filename ? entry.handle : undefined
+      if (!handle) {
+        const pickerWindow = window as RoutePickerWindow
+        if (!pickerWindow.showSaveFilePicker) {
+          setFileSaveStatus('Direct saving is unavailable. Use Download or Save to Tab.')
+          return
+        }
         handle = await pickerWindow.showSaveFilePicker({
-          suggestedName: route.filename,
+          suggestedName: route.filename.split('/').at(-1) ?? route.filename,
           types: [
             {
               description: 'TravelMapping waypoint files',
@@ -624,23 +490,18 @@ function App() {
             },
           ],
         })
-        routeFileHandlesRef.current.set(routeId, handle)
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          return
-        }
-
-        setFileSaveStatus('Unable to open a save dialog for that route.')
-        return
       }
+      await writeRouteFile(handle, route.inputText)
+      routeFileHandlesRef.current.set(routeId, { handle, filename: route.filename })
+      markSaved(routeId, route.filename, route.inputText)
+      setFileSaveStatus(`Saved ${route.filename} to disk.`)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      setFileSaveStatus(`Unable to save ${route.filename}: ${errorMessage(error)}`)
+    } finally {
+      savingRouteIdsRef.current.delete(routeId)
+      setSavingRouteIds(new Set(savingRouteIdsRef.current))
     }
-
-    const writable = await handle.createWritable()
-    const saveText = routeId === state.activeRouteId ? state.inputText : route.inputText
-    await writable.write(saveText)
-    await writable.close()
-
-    setFileSaveStatus(`Saved ${route.filename} to disk.`)
   }
 
   async function handleCopyLoadedRoute(routeId: string) {
@@ -649,15 +510,16 @@ function App() {
       return
     }
 
-    const text = route.waypoints.length > 0 ? exportWpt(route.waypoints) : route.inputText.trim()
+    const text = route.inputText
     if (!text) {
       return
     }
 
     try {
       await navigator.clipboard.writeText(text)
-    } catch {
-      // Ignore clipboard failures silently; browser permission state can block this.
+      setFileSaveStatus(`Copied ${route.filename}.`)
+    } catch (error) {
+      setFileSaveStatus(`Unable to copy ${route.filename}: ${errorMessage(error)}`)
     }
   }
 
@@ -680,7 +542,7 @@ function App() {
         return
       }
 
-      const tableRow = tableShell.querySelector(`tr[data-waypoint-id="${waypointId}"]`) as HTMLTableRowElement | null
+      const tableRow = tableShell.querySelector(`tr[data-waypoint-id="${CSS.escape(waypointId)}"]`) as HTMLTableRowElement | null
       if (!tableRow) {
         return
       }
@@ -702,8 +564,21 @@ function App() {
     lastHoveredWaypointIdRef.current = null
   }, [])
 
-  function handleHoverRouteRow(rowIndex: number) {
-    scrollRouteSourceToLine(rowIndex)
+  function handleDownload() {
+    if (!state.inputText) return
+    const url = URL.createObjectURL(new Blob([state.inputText], { type: 'text/plain;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = activeRouteFilename?.split('/').at(-1) ?? 'route.wpt'
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 30_000)
+    setFileSaveStatus('Download requested. Verify the file was saved; this does not mark the source file as saved.')
+  }
+
+  function handleNamingModeChange(mode: typeof state.namingMode) {
+    if (mode === 'shared' && state.loadedRoutes.length > 0 &&
+        !window.confirm('Enable shared names? Visible waypoints at the same coordinates will use the first loaded route’s name. This can modify multiple routes and can be undone.')) return
+    dispatch({ type: 'naming/set-mode', mode })
   }
 
   return (
@@ -750,8 +625,8 @@ function App() {
                 ref={routeSourceRef}
                 className="route-textarea"
                 value={state.inputText}
-                onChange={(event) => dispatch({ type: 'input/set', value: event.target.value })}
-                onPaste={handleRouteSourcePaste}
+                aria-label="Route source"
+                onChange={(event) => dispatch({ type: 'input/set', value: event.target.value, fitToRoute: state.waypoints.length === 0 })}
                 onScroll={handleRouteSourceScroll}
                 spellCheck={false}
                 placeholder={'+X865456 http://www.openstreetmap.org/?lat=40.034301&lon=116.574318\nSanYuanQiao http://www.openstreetmap.org/?lat=39.959631&lon=116.451463'}
@@ -773,9 +648,21 @@ function App() {
                 <button type="button" onClick={handleReverseRoute}>Reverse order</button>
                 <button type="button" onClick={handleClearRoute}>Clear</button>
                 <button type="button" onClick={handleSaveToTab}>Save to Tab</button>
+                <button type="button" onClick={handleDownload}>Download</button>
               </div>
             </div>
-            {fileSaveStatus ? <p className="route-source-status">{fileSaveStatus}</p> : null}
+            <label className="naming-mode-picker">
+              Names at shared coordinates
+              <select value={state.namingMode} onChange={(event) => handleNamingModeChange(event.target.value === 'shared' ? 'shared' : 'independent')}>
+                <option value="shared">Shared names</option>
+                <option value="independent">Independent names</option>
+              </select>
+            </label>
+            <p className="naming-mode-help">{state.namingMode === 'shared'
+              ? 'Visible waypoints at matching coordinates share a name. Imports use the first loaded name; edits propagate across routes.'
+              : 'Each route keeps its own waypoint names. Shared-station dragging still moves matching coordinates together.'}</p>
+            {!state.activeRouteId && state.inputText ? <p>Unsaved route source</p> : null}
+            {fileSaveStatus ? <p className="route-source-status" role="status">{fileSaveStatus}</p> : null}
           </article>
           {state.loadedRoutes.length > 0 ? (
             <article className="panel panel-condensed">
@@ -796,7 +683,7 @@ function App() {
                           className="loaded-route-select"
                           onClick={() => handleSetActiveRoute(route.id)}
                         >
-                          <span>{route.filename}</span>
+                          <span>{route.filename}{isRouteDirty(state, savedSources, route.id) ? ' (unsaved)' : ''}</span>
                           <span>{`${route.waypoints.length} wp · ${route.issues.length} issues`}</span>
                         </button>
                         <button
@@ -823,7 +710,7 @@ function App() {
                           onClick={() => handleSaveRouteToFile(route.id)}
                           title="Save route to file"
                           aria-label={`Save route ${route.filename} to file`}
-                          disabled={!canSaveRouteToFile(route.id)}
+                          disabled={savingRouteIds.has(route.id) || !canSaveRouteToFile()}
                         >
                           💾
                         </button>
@@ -857,7 +744,7 @@ function App() {
                 <p>Current vertical slice: route rendering, fit-to-route, and table-driven editing.</p>
               </div>
               <div className="inline-actions">
-                <button type="button" onClick={handleUndo}>Undo</button>
+                <button type="button" onClick={handleUndo} disabled={state.history.length === 0}>Undo</button>
               </div>
             </div>
             <RouteMap
@@ -886,133 +773,9 @@ function App() {
           </article>
 
           <div className="details-column">
-          <article className="panel panel-condensed">
-            <div className="panel-heading compact">
-              <div>
-                <h2>Route Table</h2>
-                <p>Drag rows to reorder the route, or use the row controls for precise moves.</p>
-              </div>
-              <div className="inline-actions">
-                <div className="distance-toggle" role="group" aria-label="Distance unit">
-                  <button
-                    type="button"
-                    className={distanceUnit === 'mi' ? 'distance-toggle-active' : undefined}
-                    onClick={() => setDistanceUnit('mi')}
-                  >
-                    mi
-                  </button>
-                  <button
-                    type="button"
-                    className={distanceUnit === 'km' ? 'distance-toggle-active' : undefined}
-                    onClick={() => setDistanceUnit('km')}
-                  >
-                    km
-                  </button>
-                </div>
-              </div>
-            </div>
-            {routeRows.length === 0 ? (
-              <p className="empty-state">Load a route to inspect and reorder its waypoint table.</p>
-            ) : (
-              <div ref={routeTableShellRef} className="route-table-shell">
-                <table className="route-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">#</th>
-                      <th scope="col">Label</th>
-                      <th scope="col">Type</th>
-                      <th scope="col">Lat</th>
-                      <th scope="col">Lon</th>
-                      <th scope="col">Seg. {distanceUnit}</th>
-                      <th scope="col">Tot. {distanceUnit}</th>
-                      <th scope="col">Move</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {routeRows.map((row) => (
-                      <tr
-                        key={row.id}
-                        data-waypoint-id={row.id}
-                        className={`${row.hidden ? 'route-row-hidden' : ''} ${row.issues.length > 0 ? 'route-row-has-issues' : ''} ${draggedWaypointId === row.id ? 'route-row-dragging' : ''}`.trim()}
-                        draggable
-                        onMouseEnter={() => handleHoverRouteRow(row.index)}
-                        onClick={() => handleFocusWaypoint(row.id)}
-                        onDragStart={() => setDraggedWaypointId(row.id)}
-                        onDragEnd={() => setDraggedWaypointId(null)}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => {
-                          if (!draggedWaypointId) {
-                            return
-                          }
-
-                          const fromIndex = routeRows.findIndex((candidate) => candidate.id === draggedWaypointId)
-                          if (fromIndex >= 0) {
-                            handleMoveWaypoint(fromIndex, row.index)
-                          }
-                          setDraggedWaypointId(null)
-                        }}
-                      >
-                        <td>{row.index + 1}</td>
-                        <td className="route-row-label-cell">
-                          <div>{row.label}</div>
-                          {row.altLabels.length > 0 ? (
-                            <div className="route-row-alt-labels">{row.altLabels.join(' ')}</div>
-                          ) : null}
-                          {row.issues.length > 0 ? (
-                            <div className="route-row-issues">{row.issues.join(' · ')}</div>
-                          ) : null}
-                        </td>
-                        <td>{row.hidden ? 'Geo' : 'Station'}</td>
-                        <td>{row.lat}</td>
-                        <td>{row.lon}</td>
-                        <td>{(distanceUnit === 'km' ? row.segmentDistanceMiles * 1.609344 : row.segmentDistanceMiles).toFixed(2)}</td>
-                        <td>{(distanceUnit === 'km' ? row.totalDistanceMiles * 1.609344 : row.totalDistanceMiles).toFixed(2)}</td>
-                        <td>
-                          <div className="route-row-move-actions">
-                            <button
-                              type="button"
-                              className="route-row-move-button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handleMoveWaypoint(row.index, Math.max(0, row.index - 1))
-                              }}
-                              disabled={row.index === 0}
-                              aria-label={`Move ${row.label} up`}
-                            >
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              className="route-row-move-button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handleMoveWaypoint(row.index, Math.min(routeRows.length - 1, row.index + 1))
-                              }}
-                              disabled={row.index === routeRows.length - 1}
-                              aria-label={`Move ${row.label} down`}
-                            >
-                              ↓
-                            </button>
-                            <button
-                              type="button"
-                              className="route-row-move-button route-row-remove-button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                handleDeleteWaypoint(row.id)
-                              }}
-                              aria-label={`Remove ${row.label}`}
-                            >
-                              🗑
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </article>
+          <RouteTable waypoints={state.waypoints} issues={state.issues} shellRef={routeTableShellRef}
+            onFocus={handleFocusWaypoint} onHoverLine={scrollRouteSourceToLine}
+            onMove={handleMoveWaypoint} onDelete={handleDeleteWaypoint} />
 
           <article className="panel panel-condensed">
             <div className="panel-heading compact">

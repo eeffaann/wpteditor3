@@ -2,24 +2,66 @@
 
 React + TypeScript + Vite workspace for rebuilding the TravelMapping waypoint editor.
 
-## Current Slice
+## Features
 
 The app currently includes:
 
 - `.wpt` parsing for `label URL` lines using OpenStreetMap URLs with `lat` and `lon` query params
-- route loading and load-and-pan flows
-- route reversal, undo, clear, layout toggle, and line thickness control
-- in-use label loading and map highlighting
-- Leaflet route rendering with waypoint markers and parser issue reporting
-- export preview plus `Save to Tab` behavior
+- live source-to-map synchronization, including typed and pasted edits
+- folder loading, multiple active/background routes, route renaming and removal
+- waypoint insertion, dragging, deletion, reordering, alternate labels, and station/geometry conversion
+- shared-station coordinate editing across loaded routes
+- route reversal, clear, and undo (up to 20 edits, including multi-route changes)
+- Leaflet rendering and TravelMapping-specific validation with original source-line references
+- exact-source clipboard export, `Save to Tab`, downloads, and direct file saving in supported browsers
+- unsaved-change indicators, reload warnings, and local workspace recovery
 
-The current implementation intentionally omits the external map-link feature and does not yet include marker dragging, popup editing actions, alternate labels, or the full TravelMapping validation suite.
+The external map-link feature and the full TravelMapping validation suite are not implemented.
+
+## Editing and shared names
+
+Source edits immediately update the route table and map. **Add Route** creates another
+route from the current source; **Replace Route** reloads the current route from that source.
+Map and table edits preserve malformed lines, blank lines, and unchanged waypoint formatting
+instead of discarding source that could not be parsed. Coordinates on changed waypoint lines
+are written with six decimal places. Invalid/out-of-range coordinates remain in the source
+with a diagnostic and are not sent to the map.
+
+**Names at shared coordinates** has two modes:
+
+- **Shared names** (default): visible waypoints at coordinates matching to six decimal places
+  share their primary name. Imports and enabling this mode use the first loaded name;
+  editing a name in the source or popup propagates it to connected routes. Enabling the mode
+  on an existing workspace requires confirmation. Changes are undoable and affected routes
+  are marked unsaved.
+- **Independent names**: each route keeps its own primary and alternate labels. This mode
+  does not undo names already harmonized; use Undo to revert the mode change and its edits.
+
+Alternate labels remain route-specific in either mode. Hidden geometry-point names are
+not harmonized. Shared-station dragging still updates matching coordinates in both modes.
+
+## Saving and recovery
+
+**Add Folder** uses the File System Access API when available, retaining handles for direct
+save-back. Other browsers use a folder file input and can export with **Download** or
+**Save to Tab**. Renaming a loaded route changes its in-memory filename, not the original
+disk file; its next save uses Save As. Save failures and clipboard failures are shown in the
+editor. A route is marked saved only after the write and close succeed; edits made while
+saving remain unsaved. Downloads, copying, and Save to Tab do not mark source files saved.
+
+The workspace source, naming mode, and saved-file baselines are stored in this browser's
+local storage after a short debounce and when leaving the page. Recovery is local to this
+site/browser profile; it is not a disk backup or cross-device synchronization. Storage errors
+are reported explicitly. Recovery does not restore undo history or file permissions/handles,
+so saving a recovered route requires choosing its destination again. Reload/close warnings
+depend on browser support. Do not rely on recovery instead of saving files.
 
 ## Scripts
 
 - `npm run dev` starts the Vite development server
 - `npm run build` runs TypeScript build validation and creates a production bundle
 - `npm run lint` runs ESLint across the workspace
+- `npm test` runs parser/document, reducer, recovery, file-write, and UI regression tests
 - `npm run preview` serves the production bundle locally
 
 ## Local Development
@@ -28,6 +70,9 @@ The current implementation intentionally omits the external map-link feature and
 npm install
 npm run dev
 ```
+
+Use Node.js 22.12 or later. Pull requests run lint, tests, and a production build.
+The deployment workflow runs the same checks before publishing.
 
 ## Deployment
 
@@ -44,9 +89,8 @@ The first deployment happens after the workflow is committed and pushed to
 existing Azure resource and its repository deployment secret can be deleted
 separately if no longer needed.
 
-## Next Implementation Targets
+## Code organization
 
-1. Draggable marker editing with undoable coordinate updates
-2. Waypoint add/delete and popup actions on the map
-3. Alternate label support and hidden waypoint workflows
-4. Richer TravelMapping-specific validation rules
+- `src/wpt`: parsing, lossless source reconciliation, export, validation, and shared geometry
+- `src/editor`: reducer, route table, file I/O, dirty tracking, and workspace recovery
+- `src/map`: Leaflet rendering/interactions and waypoint popup editing
