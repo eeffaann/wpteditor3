@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type ClipboardEvent } from 'react'
 import './App.css'
 import { useEditorSession } from './editor/useEditorSession'
-import { isRouteDirty } from './editor/editorRecovery'
+import { isRouteDirty, isRouteModified } from './editor/editorRecovery'
 import { collectWptFileHandles, errorMessage, writeRouteFile, type RouteFileHandle, type RoutePickerWindow } from './editor/routeFiles'
 import type { LoadedRoute } from './editor/editorTypes'
 import { RouteMap } from './map/RouteMap'
@@ -35,6 +35,7 @@ function buildLoadedRoute(filename: string, inputText: string): LoadedRoute {
     id: crypto.randomUUID(),
     filename,
     inputText,
+    originalInputText: inputText,
     waypoints: parsedRoute.waypoints,
     issues: parsedRoute.issues,
   }
@@ -184,6 +185,7 @@ function App() {
           id: routeId,
           filename,
           inputText: state.inputText,
+          originalInputText: state.activeRouteId ? state.inputText : state.draftBaseline ?? state.inputText,
           waypoints: parsedRoute.waypoints,
           issues: parsedRoute.issues,
         },
@@ -209,6 +211,7 @@ function App() {
           id: routeId,
           filename,
           inputText: state.inputText,
+          originalInputText: activeRoute?.originalInputText ?? state.draftBaseline ?? state.inputText,
           waypoints: parsedRoute.waypoints,
           issues: parsedRoute.issues,
         },
@@ -322,6 +325,14 @@ function App() {
 
     highlight.scrollTop = textarea.scrollTop
     highlight.scrollLeft = textarea.scrollLeft
+  }
+
+  function handleInitialSourcePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (state.activeRouteId || state.inputText) return
+    const text = event.clipboardData.getData('text').replace(/\r\n?/g, '\n')
+    if (!text) return
+    event.preventDefault()
+    dispatch({ type: 'input/set', value: text, draftBaseline: text, fitToRoute: true })
   }
 
   function scrollRouteSourceToLine(lineIndex: number) {
@@ -627,6 +638,7 @@ function App() {
                 value={state.inputText}
                 aria-label="Route source"
                 onChange={(event) => dispatch({ type: 'input/set', value: event.target.value, fitToRoute: state.waypoints.length === 0 })}
+                onPaste={handleInitialSourcePaste}
                 onScroll={handleRouteSourceScroll}
                 spellCheck={false}
                 placeholder={'+X865456 http://www.openstreetmap.org/?lat=40.034301&lon=116.574318\nSanYuanQiao http://www.openstreetmap.org/?lat=39.959631&lon=116.451463'}
@@ -661,7 +673,9 @@ function App() {
             <p className="naming-mode-help">{state.namingMode === 'shared'
               ? 'Visible waypoints at matching coordinates share a name. Imports use the first loaded name; edits propagate across routes.'
               : 'Each route keeps its own waypoint names. Shared-station dragging still moves matching coordinates together.'}</p>
-            {!state.activeRouteId && state.inputText ? <p>Unsaved route source</p> : null}
+            {!state.activeRouteId && state.inputText ? <p>{state.draftBaseline === null
+              ? 'New route source'
+              : state.inputText === state.draftBaseline ? 'Unmodified pasted source' : 'Modified pasted source'} · not saved locally</p> : null}
             {fileSaveStatus ? <p className="route-source-status" role="status">{fileSaveStatus}</p> : null}
           </article>
           {state.loadedRoutes.length > 0 ? (
@@ -683,8 +697,10 @@ function App() {
                           className="loaded-route-select"
                           onClick={() => handleSetActiveRoute(route.id)}
                         >
-                          <span>{route.filename}{isRouteDirty(state, savedSources, route.id) ? ' (unsaved)' : ''}</span>
-                          <span>{`${route.waypoints.length} wp · ${route.issues.length} issues`}</span>
+                          <span>{route.filename} ({isRouteModified(route) ? 'modified' : 'unmodified'})</span>
+                          <span>{`${route.waypoints.length} wp · ${route.issues.length} issues`}{isRouteDirty(state, savedSources, route.id)
+                            ? savedSources[route.id] ? ' · changes not saved locally' : ' · not saved locally'
+                            : ' · saved locally'}</span>
                         </button>
                         <button
                           type="button"

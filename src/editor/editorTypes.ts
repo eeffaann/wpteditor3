@@ -27,12 +27,14 @@ export type LoadedRoute = {
   id: string
   filename: string
   inputText: string
+  originalInputText?: string
   waypoints: Waypoint[]
   issues: ParseIssue[]
 }
 
 export type EditorSnapshot = {
   inputText: string
+  draftBaseline: string | null
   waypoints: Waypoint[]
   issues: ParseIssue[]
   loadedLabelSet: string[]
@@ -43,6 +45,7 @@ export type EditorSnapshot = {
 
 export type EditorState = {
   inputText: string
+  draftBaseline: string | null
   inUseLabelText: string
   waypoints: Waypoint[]
   issues: ParseIssue[]
@@ -57,7 +60,7 @@ export type EditorState = {
 }
 
 export type EditorAction =
-  | { type: 'input/set'; value: string; fitToRoute?: boolean }
+  | { type: 'input/set'; value: string; fitToRoute?: boolean; draftBaseline?: string }
   | { type: 'naming/set-mode'; mode: EditorState['namingMode'] }
   | { type: 'labels/input-set'; value: string }
   | { type: 'route/load'; fitToRoute: boolean; route: ParsedRoute }

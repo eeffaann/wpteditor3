@@ -14,7 +14,7 @@ The app currently includes:
 - route reversal, clear, and undo (up to 20 edits, including multi-route changes)
 - Leaflet rendering and TravelMapping-specific validation with original source-line references
 - exact-source clipboard export, `Save to Tab`, downloads, and direct file saving in supported browsers
-- unsaved-change indicators, reload warnings, and local workspace recovery
+- modified/unmodified indicators, separate local-save status, reload warnings, and local workspace recovery
 
 The external map-link feature and the full TravelMapping validation suite are not implemented.
 
@@ -41,6 +41,16 @@ Alternate labels remain route-specific in either mode. Hidden geometry-point nam
 not harmonized. Shared-station dragging still updates matching coordinates in both modes.
 
 ## Saving and recovery
+
+Route labels show **unmodified** or **modified** relative to the text originally pasted or
+loaded, independently of whether a local file exists. A first paste into an empty source
+also establishes this baseline before adding the route. Reverting edits (including Undo)
+restores the unmodified label when the source matches again. Saving does not reset this
+original-text comparison: a route can be both modified and saved locally.
+
+The smaller local-save status separately shows whether the current source has been saved.
+An unmodified pasted route can still be unsaved locally, and the existing leave-page warning
+continues to protect it. Recovery preserves both the original-text and local-save baselines.
 
 **Add Folder** uses the File System Access API when available, retaining handles for direct
 save-back. Other browsers use a folder file input and can export with **Download** or

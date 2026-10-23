@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { editorReducer, initialEditorState } from './editorReducer'
-import { hasUnsavedChanges, isRouteDirty, restoreRecovery, serializeRecovery } from './editorRecovery'
+import { hasUnsavedChanges, isRouteDirty, isRouteModified, restoreRecovery, serializeRecovery } from './editorRecovery'
 import { parseRouteDocument } from '../wpt/routeDocument'
 
 const text = '\nAlpha http://www.openstreetmap.org/?lat=40&lon=-75\nBROKEN\n'
@@ -49,5 +49,38 @@ describe('workspace recovery and dirty tracking', () => {
     const source = JSON.parse(serializeRecovery(loaded, saved))
     expect(() => restoreRecovery(JSON.stringify({ ...source, activeRouteId: 'missing' }))).toThrow()
     expect(() => restoreRecovery(JSON.stringify({ ...source, routes: [route, route] }))).toThrow()
+  })
+
+  it('keeps modification status separate from disk-save status across recovery', () => {
+    expect(isRouteModified(loaded.loadedRoutes[0])).toBe(false)
+    expect(hasUnsavedChanges(loaded, {})).toBe(true)
+    const edited = editorReducer(loaded, { type: 'input/set', value: text.replace('Alpha', 'Edited') })
+    const savedEdited = { one: { filename: 'one.wpt', inputText: edited.inputText } }
+    const restored = restoreRecovery(serializeRecovery(edited, savedEdited))
+    expect(isRouteModified(restored.state.loadedRoutes[0])).toBe(true)
+    expect(hasUnsavedChanges(restored.state, restored.savedSources)).toBe(false)
+    const reverted = editorReducer(restored.state, { type: 'input/set', value: text })
+    expect(isRouteModified(reverted.loadedRoutes[0])).toBe(false)
+    expect(hasUnsavedChanges(reverted, restored.savedSources)).toBe(true)
+  })
+
+  it('recovers the original paste baseline before a route has been added', () => {
+    let state = editorReducer(initialEditorState, { type: 'input/set', value: text, draftBaseline: text })
+    state = editorReducer(state, { type: 'input/set', value: `${text}EXTRA` })
+    const restored = restoreRecovery(serializeRecovery(state, {}))
+    expect(restored.state.draftBaseline).toBe(text)
+    expect(restored.state.inputText).toBe(`${text}EXTRA`)
+  })
+
+  it('migrates older recovery using the saved baseline when available', () => {
+    const old = JSON.parse(serializeRecovery(loaded, saved))
+    delete old.draftBaseline
+    delete old.routes[0].originalInputText
+    old.routes[0].inputText = text.replace('Alpha', 'Edited')
+    const restored = restoreRecovery(JSON.stringify(old))
+    expect(isRouteModified(restored.state.loadedRoutes[0])).toBe(true)
+    expect(restored.state.draftBaseline).toBeNull()
+    expect(restoreRecovery(JSON.stringify({ ...old, savedSources: {} })).state.loadedRoutes[0].originalInputText)
+      .toBe(old.routes[0].inputText)
   })
 })

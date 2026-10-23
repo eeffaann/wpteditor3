@@ -132,6 +132,7 @@ function syncActiveRoute(state: EditorState, nextRoute: Pick<LoadedRoute, 'input
 
 
 function mergeLoadedRoutesByCoordinate(routes: LoadedRoute[], namingMode: EditorState['namingMode']) {
+  routes = routes.map((route) => route.originalInputText === undefined ? { ...route, originalInputText: route.inputText } : route)
   if (namingMode === 'independent') return routes
   const canonicalLabelByCoordinate = new Map<string, string>()
 
@@ -192,6 +193,7 @@ function syncInputText(state: EditorState, waypoints: EditorState['waypoints']) 
 function cloneSnapshot(state: EditorState): EditorSnapshot {
   return {
     inputText: state.inputText,
+    draftBaseline: state.draftBaseline,
     waypoints: state.waypoints,
     issues: state.issues,
     loadedLabelSet: state.loadedLabelSet,
@@ -210,6 +212,7 @@ function withHistory(state: EditorState): EditorState {
 
 export const initialEditorState: EditorState = {
   inputText: '',
+  draftBaseline: null,
   inUseLabelText: '',
   waypoints: [],
   issues: [],
@@ -231,6 +234,7 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
       return syncActiveRoute({
         ...withHistory(state),
         ...nextRoute,
+        draftBaseline: action.draftBaseline ?? state.draftBaseline,
         fitRequest: action.fitToRoute ? state.fitRequest + 1 : state.fitRequest,
       }, nextRoute)
     }
@@ -639,6 +643,7 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
       return syncActiveRoute({
         ...nextState,
         inputText: '',
+        draftBaseline: null,
         waypoints: [],
         issues: [],
       }, { inputText: '', waypoints: [], issues: [] })
@@ -653,6 +658,7 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
       return {
         ...state,
         inputText: previous.inputText,
+        draftBaseline: previous.draftBaseline,
         waypoints: previous.waypoints,
         issues: previous.issues,
         loadedLabelSet: previous.loadedLabelSet,
@@ -756,6 +762,7 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
           loadedRoutes: [],
           activeRouteId: null,
           inputText: '',
+          draftBaseline: null,
           waypoints: [],
           issues: [],
           fitRequest: state.fitRequest,

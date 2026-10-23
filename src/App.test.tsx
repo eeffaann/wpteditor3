@@ -92,7 +92,8 @@ describe('editor UI integration', () => {
     addRoute()
     fireEvent.click(screen.getByRole('button', { name: 'Save route route-1.wpt to file' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Disk full'))
-    expect(screen.getByText('route-1.wpt (unsaved)')).toBeTruthy()
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^route-1.wpt/ }).textContent).toContain('not saved locally')
   })
 
   it('saves the exact captured source and keeps edits during a save dirty', async () => {
@@ -111,9 +112,11 @@ describe('editor UI integration', () => {
     fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Newer') } })
     complete()
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Saved'))
-    expect(screen.getByText('route-1.wpt (unsaved)')).toBeTruthy()
+    expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^route-1.wpt/ }).textContent).toContain('changes not saved locally')
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(screen.getByText('route-1.wpt')).toBeTruthy()
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^route-1.wpt/ }).textContent).toContain('saved locally')
   })
 
   it('restores the file handle after undoing a route removal', async () => {
@@ -131,5 +134,42 @@ describe('editor UI integration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save route route-1.wpt to file' }))
     await waitFor(() => expect(write).toHaveBeenCalledTimes(2))
     expect(pickerWindow.showSaveFilePicker).toHaveBeenCalledOnce()
+  })
+
+  it('shows pasted text as unmodified without claiming it is saved locally', () => {
+    render(<App />)
+    fireEvent.paste(source(), { clipboardData: { getData: () => text } })
+    expect(screen.getByText('Unmodified pasted source · not saved locally')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add Route' }))
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^route-1.wpt/ }).textContent).toContain('not saved locally')
+    const warning = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(warning)
+    expect(warning.defaultPrevented).toBe(true)
+    fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Edited') } })
+    expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+  })
+
+  it('keeps the initial paste baseline through editing, Add Route, Replace Route and saving', async () => {
+    pickerWindow.showSaveFilePicker = vi.fn().mockResolvedValue({
+      createWritable: vi.fn().mockResolvedValue({ write: vi.fn(), close: vi.fn(), abort: vi.fn() }),
+    })
+    render(<App />)
+    fireEvent.paste(source(), { clipboardData: { getData: () => text.replace(/\n/g, '\r\n') } })
+    fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Edited') } })
+    expect(screen.getByText('Modified pasted source · not saved locally')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add Route' }))
+    expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Replace Route' }))
+    expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Save route route-1.wpt to file' }))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Saved'))
+    expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^route-1.wpt/ }).textContent).not.toContain('not saved locally')
+    const warning = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(warning)
+    expect(warning.defaultPrevented).toBe(false)
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { editorReducer, initialEditorState } from './editorReducer'
 import type { EditorAction, EditorState } from './editorTypes'
 import { parseRouteDocument } from '../wpt/routeDocument'
+import { isRouteModified } from './editorRecovery'
 
 const text = 'Alpha http://www.openstreetmap.org/?lat=40&lon=-75\nBROKEN\nBeta http://www.openstreetmap.org/?lat=41&lon=-76'
 const route = (id: string, inputText = text) => ({ id, filename: `${id}.wpt`, ...parseRouteDocument(inputText) })
@@ -41,6 +42,8 @@ describe('editor state', () => {
     expect(state.loadedRoutes[1].waypoints[0].label).toBe('Alpha')
     expect(state.loadedRoutes[1].inputText).toContain('BROKEN')
     expect(state.loadedRoutes[1].issues.some((issue) => issue.content === 'BROKEN')).toBe(true)
+    expect(isRouteModified(state.loadedRoutes[0])).toBe(false)
+    expect(isRouteModified(state.loadedRoutes[1])).toBe(true)
   })
 
   it('keeps imports, source renames and popup renames independent in independent mode', () => {
