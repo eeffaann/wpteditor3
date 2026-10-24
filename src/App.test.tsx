@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import type { RouteMapProps } from './map/RouteMap'
 import type { RoutePickerWindow } from './editor/routeFiles'
+import { RECOVERY_KEY, restoreRecovery } from './editor/editorRecovery'
 
 vi.mock('./map/RouteMap', () => ({
   RouteMap: (props: RouteMapProps) => (
@@ -36,6 +37,54 @@ function addRoute(value = text) {
 }
 
 describe('editor UI integration', () => {
+  it('starts an empty session, clears recovery and undo, and retains the naming preference', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const view = render(<App />)
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'independent' } })
+    addRoute()
+    addRoute(text.replace('Alpha', 'Other'))
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    expect(window.confirm).toHaveBeenCalledOnce()
+    expect(source().value).toBe('')
+    expect(screen.queryByRole('heading', { name: 'Loaded Routes' })).toBeNull()
+    expect(screen.getByTestId('map-labels').textContent).toBe('')
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('independent')
+    const restored = restoreRecovery(localStorage.getItem(RECOVERY_KEY)!)
+    expect(restored.state.loadedRoutes).toEqual([])
+    expect(restored.state.inputText).toBe('')
+    expect(restored.savedSources).toEqual({})
+    const warning = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(warning)
+    expect(warning.defaultPrevented).toBe(false)
+    view.unmount()
+    render(<App />)
+    expect(source().value).toBe('')
+    expect(screen.queryByRole('heading', { name: 'Loaded Routes' })).toBeNull()
+    addRoute()
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+  })
+
+  it('keeps the workspace and undo when starting a new session is cancelled', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<App />)
+    addRoute()
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    expect(source().value).toBe(text)
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('keeps the workspace if resetting recovery fails', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<App />)
+    addRoute()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage denied') })
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    expect(source().value).toBe(text)
+    expect(screen.getByRole('status').textContent).toContain('Unable to start a new session: Storage denied')
+  })
+
   it('synchronizes typing, the map, the table, copy and map edits without losing invalid text', async () => {
     render(<App />)
     addRoute()
@@ -109,6 +158,7 @@ describe('editor UI integration', () => {
     fireEvent.click(save)
     await waitFor(() => expect(write).toHaveBeenCalledWith(text))
     expect(save.disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'New session' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Newer') } })
     complete()
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Saved'))

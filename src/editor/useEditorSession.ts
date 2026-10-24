@@ -31,6 +31,18 @@ export function useEditorSession() {
     setSavedSources((previous) => ({ ...previous, [id]: { filename, inputText } }))
   }, [])
 
+  const clearWorkspace = useCallback(() => {
+    const empty = { ...initialEditorState, namingMode: current.current.state.namingMode }
+    try {
+      localStorage.setItem(RECOVERY_KEY, serializeRecovery(empty, {}))
+      current.current = { state: empty, savedSources: {} }
+      return true
+    } catch (error) {
+      setStatus(`Unable to start a new session: ${errorMessage(error)}. Existing routes have been kept.`)
+      return false
+    }
+  }, [])
+
   const persist = useCallback(() => {
     if (session.recoveryFailed && current.current.state === session.state) return
     try {
@@ -66,5 +78,5 @@ export function useEditorSession() {
     }
   }, [persist])
 
-  return { state, dispatch, savedSources, markSaved, status, setStatus }
+  return { state, dispatch, savedSources, markSaved, clearWorkspace, status, setStatus }
 }

@@ -52,6 +52,13 @@ The smaller local-save status separately shows whether the current source has be
 An unmodified pasted route can still be unsaved locally, and the existing leave-page warning
 continues to protect it. Recovery preserves both the original-text and local-save baselines.
 
+**New session** clears every loaded route, source draft, undo history, file handle, and
+saved-file baseline after confirmation. It immediately replaces local recovery with an
+empty workspace so old routes do not return on reload. It keeps your naming-mode preference
+and never deletes files on disk. Unlike **Clear**, which clears only the current route and
+can be undone, starting a new session cannot be undone. Finish any active file save first.
+If recovery storage cannot be reset, the editor reports the error and keeps the current workspace.
+
 **Add Folder** uses the File System Access API when available, retaining handles for direct
 save-back. Other browsers use a folder file input and can export with **Download** or
 **Save to Tab**. Renaming a loaded route changes its in-memory filename, not the original
