@@ -41,8 +41,8 @@ function buildLoadedRoute(filename: string, inputText: string): LoadedRoute {
   }
 }
 
-function App() {
-  const { state, dispatch, savedSources, markSaved, status: fileSaveStatus, setStatus: setFileSaveStatus } = useEditorSession()
+function EditorApp({ onNewSession }: { onNewSession: () => void }) {
+  const { state, dispatch, savedSources, markSaved, clearWorkspace, status: fileSaveStatus, setStatus: setFileSaveStatus } = useEditorSession()
   const [focusedWaypointId, setFocusedWaypointId] = useState<string | null>(null)
   const [focusRequest, setFocusRequest] = useState(0)
   const [mapWrapperHeight, setMapWrapperHeight] = useState<number | null>(null)
@@ -298,6 +298,15 @@ function App() {
     startTransition(() => {
       dispatch({ type: 'route/clear' })
     })
+  }
+
+  function handleNewSession() {
+    if (savingRouteIdsRef.current.size > 0) {
+      setFileSaveStatus('Wait for the current file save to finish before starting a new session.')
+      return
+    }
+    if (!window.confirm('Start a new session? This clears all loaded routes, source text, undo history, and recovery data. Any work not saved locally will be lost. Files on disk will not be deleted.')) return
+    if (clearWorkspace()) onNewSession()
   }
 
   function handleUndo() {
@@ -659,6 +668,7 @@ function App() {
                 <button type="button" onClick={handleAddFolder}>Add Folder</button>
                 <button type="button" onClick={handleReverseRoute}>Reverse order</button>
                 <button type="button" onClick={handleClearRoute}>Clear</button>
+                <button type="button" onClick={handleNewSession} disabled={savingRouteIds.size > 0}>New session</button>
                 <button type="button" onClick={handleSaveToTab}>Save to Tab</button>
                 <button type="button" onClick={handleDownload}>Download</button>
               </div>
@@ -820,4 +830,7 @@ function App() {
   )
 }
 
-export default App
+export default function App() {
+  const [sessionKey, setSessionKey] = useState(0)
+  return <EditorApp key={sessionKey} onNewSession={() => setSessionKey((key) => key + 1)} />
+}
