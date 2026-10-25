@@ -66,10 +66,11 @@ export type EditorAction =
   | { type: 'route/load'; fitToRoute: boolean; route: ParsedRoute }
   | { type: 'routes/add-route'; route: LoadedRoute }
   | { type: 'routes/replace-active-route'; route: LoadedRoute }
-  | { type: 'route/insert'; lat: number; lon: number; hidden: boolean }
+  | { type: 'route/insert'; lat: number; lon: number; hidden: boolean; labelSeed: number }
   | { type: 'route/rename-waypoint'; waypointId: string; nextLabel: string }
+  | { type: 'route/match-shared-name'; waypointId: string; routeId: string; otherWaypointId: string; direction: 'use-other' | 'use-current' }
   | { type: 'route/set-alt-labels'; waypointId: string; altLabels: string[] }
-  | { type: 'route/toggle-waypoint-kind'; waypointId: string }
+  | { type: 'route/toggle-waypoint-kind'; waypointId: string; labelSeed: number }
   | { type: 'route/update-waypoint-position'; waypointId: string; lat: number; lon: number }
   | { type: 'route/update-shared-station-position'; sourceLat: number; sourceLon: number; lat: number; lon: number }
   | { type: 'route/delete-waypoint'; waypointId: string }
@@ -81,6 +82,7 @@ export type EditorAction =
   | { type: 'routes/load-folder'; routes: LoadedRoute[] }
   | { type: 'routes/add-folder'; routes: LoadedRoute[] }
   | { type: 'routes/set-active'; routeId: string }
+  | { type: 'routes/refresh'; routeId: string; inputText: string }
   | { type: 'routes/rename'; routeId: string; filename: string }
   | { type: 'routes/remove'; routeId: string }
   | { type: 'history/undo' }

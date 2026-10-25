@@ -461,6 +461,9 @@ textarea:focus-visible {
   padding: 0;
   display: grid;
   gap: 8px;
+  max-height: min(320px, 40svh);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .loaded-route-item {

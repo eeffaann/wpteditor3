@@ -10,6 +10,8 @@ vi.mock('./map/RouteMap', () => ({
     <div>
       <span data-testid="map-labels">{props.waypoints.map((waypoint) => waypoint.label).join(',')}</span>
       <button onClick={() => props.onRenameWaypoint(props.waypoints[0].id, 'MapRenamed')}>Rename on map</button>
+      <button onClick={() => props.onInsertWaypoint(true, 40.5, -75.5)}>Add geometry on map</button>
+      <button onClick={() => props.onToggleWaypointKind(props.waypoints[0].id)}>Toggle first waypoint</button>
     </div>
   ),
 }))
@@ -34,6 +36,22 @@ afterEach(() => {
 function addRoute(value = text) {
   fireEvent.change(source(), { target: { value } })
   fireEvent.click(screen.getByRole('button', { name: 'Add Route' }))
+}
+
+function fileHandle() {
+  return {
+    kind: 'file' as const, name: 'disk.wpt',
+    getFile: vi.fn().mockResolvedValue({ text: async () => text }),
+    createWritable: vi.fn().mockResolvedValue({ write: vi.fn(), close: vi.fn(), abort: vi.fn() }),
+  }
+}
+
+async function addFileRoute(handle: ReturnType<typeof fileHandle>) {
+  pickerWindow.showDirectoryPicker = vi.fn().mockResolvedValue({
+    values: async function* () { yield handle },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Add Folder' }))
+  await waitFor(() => expect(screen.getByText('disk.wpt (unmodified)')).toBeTruthy())
 }
 
 describe('editor UI integration', () => {
@@ -85,14 +103,12 @@ describe('editor UI integration', () => {
     expect(screen.getByRole('status').textContent).toContain('Unable to start a new session: Storage denied')
   })
 
-  it('synchronizes typing, the map, the table, copy and map edits without losing invalid text', async () => {
+  it('synchronizes typing, the map, the table and map edits without losing invalid text', () => {
     render(<App />)
     addRoute()
     fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Typed') } })
     expect(screen.getByTestId('map-labels').textContent).toContain('Typed')
     expect(screen.getByRole('button', { name: 'Focus Typed' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Copy full route route-1.wpt' }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(source().value))
     fireEvent.click(screen.getByRole('button', { name: 'Rename on map' }))
     expect(source().value).toContain('MapRenamed')
     expect(source().value).toContain('BROKEN')
@@ -125,12 +141,114 @@ describe('editor UI integration', () => {
     expect(source().value).toContain('Other')
   })
 
-  it('shows clipboard failures', async () => {
-    writeText.mockRejectedValue(new DOMException('Clipboard denied'))
+  it('replaces route copy with refresh and explains when there is no linked file', () => {
     render(<App />)
     addRoute()
-    fireEvent.click(screen.getByRole('button', { name: 'Copy full route route-1.wpt' }))
-    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Clipboard denied'))
+    expect(screen.queryByRole('button', { name: 'Copy full route route-1.wpt' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh route route-1.wpt from file' }))
+    expect(screen.getByRole('status').textContent).toContain('No linked file')
+    expect(source().value).toBe(text)
+  })
+
+  it('supplies random geometry label seeds for insertion and default-station conversion', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.6543215)
+    render(<App />)
+    addRoute(text.replace('Alpha', 'WP1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle first waypoint' }))
+    expect(screen.getByTestId('map-labels').textContent).toBe('+X654321,Beta')
+    fireEvent.click(screen.getByRole('button', { name: 'Add geometry on map' }))
+    expect(screen.getByTestId('map-labels').textContent).toContain('+X654322')
+  })
+
+  it('refreshes a linked file, updates baselines, and makes the replaced edits undoable', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const handle = fileHandle()
+    render(<App />)
+    await addFileRoute(handle)
+    fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Local') } })
+    const diskText = text.replace('Alpha', 'FromDisk')
+    handle.getFile.mockResolvedValue({ text: async () => diskText })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh route disk.wpt from file' }))
+    await waitFor(() => expect(source().value).toBe(diskText))
+    expect(handle.getFile).toHaveBeenCalledTimes(2)
+    expect(window.confirm).toHaveBeenCalledOnce()
+    expect(screen.getByText('disk.wpt (unmodified)')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^disk.wpt/ }).textContent).toContain('saved locally')
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(source().value).toContain('Local')
+    expect(screen.getByRole('button', { name: /^disk.wpt/ }).textContent).toContain('changes not saved locally')
+  })
+
+  it('does not read or replace unsaved edits when refresh is cancelled', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const handle = fileHandle()
+    render(<App />)
+    await addFileRoute(handle)
+    fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Local') } })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh route disk.wpt from file' }))
+    expect(handle.getFile).toHaveBeenCalledOnce()
+    expect(source().value).toContain('Local')
+  })
+
+  it('reports read failures without replacing the route', async () => {
+    const handle = fileHandle()
+    render(<App />)
+    await addFileRoute(handle)
+    handle.getFile.mockRejectedValue(new Error('Read denied'))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh route disk.wpt from file' }))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Read denied'))
+    expect(source().value).toBe(text)
+  })
+
+  it('refreshes a background route without switching the active route', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const handle = fileHandle()
+    render(<App />)
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'independent' } })
+    await addFileRoute(handle)
+    addRoute(text.replace('Alpha', 'Active'))
+    const activeSource = source().value
+    handle.getFile.mockResolvedValue({ text: async () => text.replace('Alpha', 'DiskUpdate') })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh route disk.wpt from file' }))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Refreshed'))
+    expect(source().value).toBe(activeSource)
+    fireEvent.click(screen.getByRole('button', { name: /^disk.wpt/ }))
+    expect(source().value).toContain('DiskUpdate')
+  })
+
+  it('does not restore a route removed while its refresh is reading', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const handle = fileHandle()
+    render(<App />)
+    await addFileRoute(handle)
+    let complete: (value: string) => void = () => { throw new Error('Read did not start') }
+    const pending = new Promise<string>((resolve) => { complete = resolve })
+    handle.getFile.mockResolvedValue({ text: () => pending })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh route disk.wpt from file' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove route disk.wpt' }))
+    complete(text)
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Refresh cancelled'))
+    expect(screen.queryByRole('heading', { name: 'Loaded Routes' })).toBeNull()
+    expect(source().value).toBe('')
+  })
+
+  it('preserves edits made while a refresh is reading and prevents concurrent saves', async () => {
+    const handle = fileHandle()
+    render(<App />)
+    await addFileRoute(handle)
+    let complete: (value: string) => void = () => { throw new Error('Read did not start') }
+    const pending = new Promise<string>((resolve) => { complete = resolve })
+    handle.getFile.mockResolvedValue({ text: () => pending })
+    const refresh = screen.getByRole('button', { name: 'Refresh route disk.wpt from file' }) as HTMLButtonElement
+    fireEvent.click(refresh)
+    expect(refresh.disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Save route disk.wpt to file' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'New session' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Newer') } })
+    complete(text.replace('Alpha', 'StaleDisk'))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Refresh cancelled'))
+    expect(source().value).toContain('Newer')
+    expect(refresh.disabled).toBe(false)
   })
 
   it('surfaces file-write failures and keeps the route unsaved', async () => {

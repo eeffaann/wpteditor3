@@ -5,12 +5,13 @@ import { errorMessage } from '../editor/routeFiles'
 import { exportWaypointLine } from '../wpt/exportWpt'
 import type { RouteMapProps } from './RouteMap'
 
-type Props = Pick<RouteMapProps, 'onRenameWaypoint' | 'onSetAltLabels' | 'onToggleWaypointKind' | 'onDeleteWaypoint'> & {
+type Props = Pick<RouteMapProps, 'onRenameWaypoint' | 'onMatchSharedName' | 'onSetAltLabels' | 'onToggleWaypointKind' | 'onDeleteWaypoint'> & {
   waypoint: Waypoint
   issueCodes: string[]
+  concurrentWaypoints?: { routeId: string; routeFilename: string; waypoint: Waypoint }[]
 }
 
-export function WaypointPopupContent({ waypoint, issueCodes, onRenameWaypoint, onSetAltLabels, onToggleWaypointKind, onDeleteWaypoint }: Props) {
+export function WaypointPopupContent({ waypoint, issueCodes, concurrentWaypoints = [], onRenameWaypoint, onMatchSharedName, onSetAltLabels, onToggleWaypointKind, onDeleteWaypoint }: Props) {
   const map = useMap()
   const altLabels = waypoint.altLabels.join(' ')
   const [labelDraft, setLabelDraft] = useState({ original: waypoint.label, value: waypoint.label })
@@ -64,6 +65,31 @@ export function WaypointPopupContent({ waypoint, issueCodes, onRenameWaypoint, o
           onChange={(event) => setAltDraft({ original: altLabels, value: event.target.value })}
           onBlur={commitAltLabels} onKeyDown={(event) => handleEnter(event, commitAltLabels)} />
       </label>
+      {!waypoint.hidden && concurrentWaypoints.some((member) => !member.waypoint.hidden) ? (
+        <div className="waypoint-popup-field">
+          <span>Names on concurrent routes</span>
+          <div className="background-station-list">
+            {concurrentWaypoints.filter((member) => !member.waypoint.hidden).map((member) => (
+              <div key={`${member.routeId}-${member.waypoint.id}`} className="background-station-item">
+                <strong>{member.waypoint.label}</strong>
+                <span>{member.routeFilename}</span>
+                <button type="button" className="waypoint-copy-button background-add-button"
+                  disabled={member.waypoint.label === waypoint.label}
+                  aria-label={`Use ${member.waypoint.label} for this point`}
+                  onClick={() => onMatchSharedName(waypoint.id, member.routeId, member.waypoint.id, 'use-other')}>
+                  Use this name for current point
+                </button>
+                <button type="button" className="waypoint-copy-button background-add-button"
+                  disabled={member.waypoint.label === waypoint.label}
+                  aria-label={`Use ${waypoint.label} on ${member.routeFilename}`}
+                  onClick={() => onMatchSharedName(waypoint.id, member.routeId, member.waypoint.id, 'use-current')}>
+                  Use current name on this route
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <p>{`${waypoint.lat.toFixed(6)}, ${waypoint.lon.toFixed(6)}`}</p>
       <div className="waypoint-popup-action-row">
         <button type="button" className="waypoint-copy-button waypoint-convert-button" onClick={() => onToggleWaypointKind(waypoint.id)}>

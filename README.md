@@ -11,10 +11,15 @@ The app currently includes:
 - folder loading, multiple active/background routes, route renaming and removal
 - waypoint insertion, dragging, deletion, reordering, alternate labels, and station/geometry conversion
 - shared-station coordinate editing across loaded routes
+- shared-point popups can adopt another route's name or apply the current name to that route
+- randomized six-digit `+X` geometry labels, including converted default `WP` stations
 - route reversal, clear, and undo (up to 20 edits, including multi-route changes)
 - Leaflet rendering and TravelMapping-specific validation with original source-line references
-- exact-source clipboard export, `Save to Tab`, downloads, and direct file saving in supported browsers
+- waypoint-line copying, exact-source `Save to Tab`, downloads, and direct file saving in supported browsers
 - modified/unmodified indicators, separate local-save status, reload warnings, and local workspace recovery
+- click an unselected route line on the map to make it active
+- scrollable Loaded Routes list for working with many route files
+- refresh file-backed routes from disk directly from Loaded Routes
 
 The external map-link feature and the full TravelMapping validation suite are not implemented.
 
@@ -40,6 +45,16 @@ with a diagnostic and are not sent to the map.
 Alternate labels remain route-specific in either mode. Hidden geometry-point names are
 not harmonized. Shared-station dragging still updates matching coordinates in both modes.
 
+At a shared station, the popup lists the names used by concurrent routes. Use either
+direction to match primary names; alternate labels and coordinates are left unchanged.
+Independent mode changes only the selected point on the selected route. Shared mode
+continues to harmonize visible names across all routes at that coordinate. Matching
+and refresh changes can be undone.
+
+New geometry nodes use random six-digit `+X` names that avoid existing primary labels
+on the route. Converting a default `WP` station also generates a `+X` name; custom
+station names keep their text with a leading `+`.
+
 ## Saving and recovery
 
 Route labels show **unmodified** or **modified** relative to the text originally pasted or
@@ -56,7 +71,7 @@ continues to protect it. Recovery preserves both the original-text and local-sav
 saved-file baseline after confirmation. It immediately replaces local recovery with an
 empty workspace so old routes do not return on reload. It keeps your naming-mode preference
 and never deletes files on disk. Unlike **Clear**, which clears only the current route and
-can be undone, starting a new session cannot be undone. Finish any active file save first.
+can be undone, starting a new session cannot be undone. Finish any active file save or refresh first.
 If recovery storage cannot be reset, the editor reports the error and keeps the current workspace.
 
 **Add Folder** uses the File System Access API when available, retaining handles for direct
@@ -65,6 +80,16 @@ save-back. Other browsers use a folder file input and can export with **Download
 disk file; its next save uses Save As. Save failures and clipboard failures are shown in the
 editor. A route is marked saved only after the write and close succeed; edits made while
 saving remain unsaved. Downloads, copying, and Save to Tab do not mark source files saved.
+
+**Refresh route** replaces the route-copy button in Loaded Routes and rereads the linked
+disk file, asking before replacing unsaved edits. It keeps the route's identity and the
+current selection. The refreshed file becomes the new original-text and local-save
+baseline; Undo restores the previous edits. In shared-name mode, refreshed station names
+also update concurrent routes. Edits made while a refresh is reading the file cancel that
+refresh instead of being overwritten. A route without a file handle (pasted, imported
+through the fallback file input, or recovered) must first be opened through **Add Folder**
+in a supported browser or saved to a file. Renamed routes still refresh from their original
+linked file until saved elsewhere.
 
 The workspace source, naming mode, and saved-file baselines are stored in this browser's
 local storage after a short debounce and when leaving the page. Recovery is local to this

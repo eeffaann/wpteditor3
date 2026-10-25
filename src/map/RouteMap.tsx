@@ -19,8 +19,10 @@ export type RouteMapProps = {
   lineWeight: number
   issues: ParseIssue[]
   inUseLabels: string[]
+  onSelectRoute: (routeId: string) => void
   onInsertWaypoint: (hidden: boolean, lat: number, lon: number) => void
   onRenameWaypoint: (waypointId: string, nextLabel: string) => void
+  onMatchSharedName: (waypointId: string, routeId: string, otherWaypointId: string, direction: 'use-other' | 'use-current') => void
   onSetAltLabels: (waypointId: string, altLabels: string[]) => void
   onToggleWaypointKind: (waypointId: string) => void
   onDeleteWaypoint: (waypointId: string) => void
@@ -468,8 +470,10 @@ export const RouteMap = memo(function RouteMap({
   lineWeight,
   issues,
   inUseLabels,
+  onSelectRoute,
   onInsertWaypoint,
   onRenameWaypoint,
+  onMatchSharedName,
   onSetAltLabels,
   onToggleWaypointKind,
   onDeleteWaypoint,
@@ -759,6 +763,16 @@ export const RouteMap = memo(function RouteMap({
                 <Polyline
                   key={`${route.id}-bg-line`}
                   positions={routePositions}
+                  bubblingMouseEvents={false}
+                  eventHandlers={{
+                    click: () => {
+                      if (draggingTarget || performance.now() < suppressExternalClickUntil) {
+                        return
+                      }
+
+                      onSelectRoute(route.id)
+                    },
+                  }}
                   pathOptions={{
                     color: routeColor,
                     weight: Math.max(3, 5 * thicknessMultiplier),
@@ -955,7 +969,9 @@ export const RouteMap = memo(function RouteMap({
                         <WaypointPopupContent
                           waypoint={waypoint}
                           issueCodes={issueCodes}
+                          concurrentWaypoints={stationGroups.find((group) => group.key === coordinateKey)?.members.filter((member) => !member.isActive) ?? []}
                           onRenameWaypoint={onRenameWaypoint}
+                          onMatchSharedName={onMatchSharedName}
                           onSetAltLabels={onSetAltLabels}
                           onToggleWaypointKind={onToggleWaypointKind}
                           onDeleteWaypoint={onDeleteWaypoint}

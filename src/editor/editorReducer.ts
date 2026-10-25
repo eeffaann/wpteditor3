@@ -57,16 +57,17 @@ function nearestInsertionIndex(waypoints: EditorState['waypoints'], lat: number,
   return bestIndex
 }
 
-function nextGeneratedLabel(existingLabels: string[], hidden: boolean) {
+function nextGeneratedLabel(existingLabels: string[], hidden: boolean, labelSeed = 0) {
   const existing = new Set(existingLabels)
 
   if (hidden) {
     for (let index = 0; index < 1_000_000; index += 1) {
-      const candidate = `+X${String(index).padStart(6, '0')}`
+      const candidate = `+X${String((labelSeed + index) % 1_000_000).padStart(6, '0')}`
       if (!existing.has(candidate)) {
         return candidate
       }
     }
+    throw new Error('All six-digit geometry-node labels are already in use.')
   }
 
   for (let index = 1; index < 1_000_000; index += 1) {
@@ -76,7 +77,7 @@ function nextGeneratedLabel(existingLabels: string[], hidden: boolean) {
     }
   }
 
-  return hidden ? '+X999999' : 'WP999999'
+  throw new Error('All generated station labels are already in use.')
 }
 
 function normalizeWaypointLabel(rawLabel: string, hidden: boolean, existingLabels: string[]) {
@@ -322,6 +323,7 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
       const label = nextGeneratedLabel(
         state.waypoints.map((waypoint) => waypoint.label),
         action.hidden,
+        action.labelSeed,
       )
       const waypoint = {
         id: buildWaypointId(state.waypoints, label, action.lat, action.lon),
@@ -425,6 +427,37 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
         inputText: activeRoute.inputText,
       }
     }
+    case 'route/match-shared-name': {
+      const waypoint = state.waypoints.find((candidate) => candidate.id === action.waypointId)
+      const otherRoute = state.loadedRoutes.find((route) => route.id === action.routeId && route.id !== state.activeRouteId)
+      const otherWaypoint = otherRoute?.waypoints.find((candidate) => candidate.id === action.otherWaypointId)
+      if (!waypoint || !otherWaypoint || waypoint.hidden || otherWaypoint.hidden ||
+          !sameCoordinate(waypoint.lat, waypoint.lon, otherWaypoint.lat, otherWaypoint.lon) ||
+          waypoint.label === otherWaypoint.label) {
+        return state
+      }
+
+      const label = action.direction === 'use-other' ? otherWaypoint.label : waypoint.label
+      const targetRouteId = action.direction === 'use-other' ? state.activeRouteId : action.routeId
+      const targetWaypointId = action.direction === 'use-other' ? waypoint.id : otherWaypoint.id
+      const loadedRoutes = state.loadedRoutes.map((route) => {
+        const waypoints = route.waypoints.map((candidate) => {
+          const matches = state.namingMode === 'shared'
+            ? !candidate.hidden && sameCoordinate(candidate.lat, candidate.lon, waypoint.lat, waypoint.lon)
+            : route.id === targetRouteId && candidate.id === targetWaypointId
+          return matches ? { ...candidate, label } : candidate
+        })
+        return waypoints.some((candidate, index) => candidate !== route.waypoints[index])
+          ? { ...route, ...editRouteDocument(route, waypoints) }
+          : route
+      })
+      const activeRoute = loadedRoutes.find((route) => route.id === state.activeRouteId)
+      return {
+        ...withHistory(state),
+        loadedRoutes,
+        ...(activeRoute ? { inputText: activeRoute.inputText, waypoints: activeRoute.waypoints, issues: activeRoute.issues } : {}),
+      }
+    }
     case 'route/set-alt-labels': {
       if (!state.waypoints.some((candidate) => candidate.id === action.waypointId)) {
         return state
@@ -454,7 +487,9 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
         .filter((candidate) => candidate.id !== action.waypointId)
         .map((candidate) => candidate.label)
       const nextHidden = !waypoint.hidden
-      const nextLabel = normalizeWaypointLabel(waypoint.label, nextHidden, otherLabels)
+      const nextLabel = nextHidden && /^WP\d+$/.test(waypoint.label)
+        ? nextGeneratedLabel(otherLabels, true, action.labelSeed)
+        : normalizeWaypointLabel(waypoint.label, nextHidden, otherLabels)
       const waypoints = state.waypoints.map((candidate) =>
         candidate.id === action.waypointId
           ? {
@@ -728,6 +763,25 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
       }
     }
 
+    case 'routes/refresh': {
+      const route = state.loadedRoutes.find((candidate) => candidate.id === action.routeId)
+      if (!route) return state
+      const refreshedRoute = {
+        ...route,
+        ...parseRouteDocument(action.inputText, route.waypoints),
+        originalInputText: action.inputText,
+      }
+      return {
+        ...withHistory(state),
+        loadedRoutes: state.loadedRoutes.map((candidate) => candidate.id === route.id ? refreshedRoute : candidate),
+        ...(route.id === state.activeRouteId ? {
+          inputText: refreshedRoute.inputText,
+          waypoints: refreshedRoute.waypoints,
+          issues: refreshedRoute.issues,
+          fitRequest: state.fitRequest + 1,
+        } : {}),
+      }
+    }
     case 'routes/rename': {
       if (!state.loadedRoutes.some((route) => route.id === action.routeId)) {
         return state
@@ -825,10 +879,11 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   const nextState = reduceEditor(state, action)
   if (nextState === state || nextState.namingMode === 'independent' || action.type === 'history/undo') return nextState
-  const preferActive = action.type === 'input/set' || action.type.startsWith('route/')
-  const orderedRoutes = preferActive
-    ? [...nextState.loadedRoutes.filter((route) => route.id === nextState.activeRouteId),
-       ...nextState.loadedRoutes.filter((route) => route.id !== nextState.activeRouteId)]
+  const preferredRouteId = action.type === 'routes/refresh' ? action.routeId
+    : action.type === 'input/set' || action.type.startsWith('route/') ? nextState.activeRouteId : null
+  const orderedRoutes = preferredRouteId
+    ? [...nextState.loadedRoutes.filter((route) => route.id === preferredRouteId),
+       ...nextState.loadedRoutes.filter((route) => route.id !== preferredRouteId)]
     : nextState.loadedRoutes
   const merged = mergeLoadedRoutesByCoordinate(orderedRoutes, nextState.namingMode)
   const byId = new Map(merged.map((route) => [route.id, route]))

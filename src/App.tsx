@@ -4,7 +4,7 @@ import { useEditorSession } from './editor/useEditorSession'
 import { isRouteDirty, isRouteModified } from './editor/editorRecovery'
 import { collectWptFileHandles, errorMessage, writeRouteFile, type RouteFileHandle, type RoutePickerWindow } from './editor/routeFiles'
 import type { LoadedRoute } from './editor/editorTypes'
-import { RouteMap } from './map/RouteMap'
+import { RouteMap, type RouteMapProps } from './map/RouteMap'
 import { parseWpt } from './wpt/parseWpt'
 import { RouteTable } from './editor/RouteTable'
 
@@ -52,12 +52,17 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
   const folderInputRef = useRef<HTMLInputElement | null>(null)
   const mapWrapperRef = useRef<HTMLElement | null>(null)
   const routeFileHandlesRef = useRef(new Map<string, { handle: RouteFileHandle; filename: string }>())
-  const savingRouteIdsRef = useRef(new Set<string>())
-  const [savingRouteIds, setSavingRouteIds] = useState<Set<string>>(new Set())
+  const fileOperationRouteIdsRef = useRef(new Set<string>())
+  const [fileOperationRouteIds, setFileOperationRouteIds] = useState<Set<string>>(new Set())
+  const currentRoutesRef = useRef(state.loadedRoutes)
   const pendingTableHoverScrollFrameRef = useRef<number | null>(null)
   const pendingSourceHoverScrollFrameRef = useRef<number | null>(null)
   const lastHoveredWaypointIdRef = useRef<string | null>(null)
   const lastHoveredRouteRowRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    currentRoutesRef.current = state.loadedRoutes
+  }, [state.loadedRoutes])
 
   useEffect(() => {
     const folderInput = folderInputRef.current
@@ -234,12 +239,16 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
 
   const handleMapInsert = useCallback((hidden: boolean, lat: number, lon: number) => {
     startTransition(() => {
-      dispatch({ type: 'route/insert', hidden, lat, lon })
+      dispatch({ type: 'route/insert', hidden, lat, lon, labelSeed: Math.floor(Math.random() * 1_000_000) })
     })
   }, [dispatch])
 
   const handleRenameWaypoint = useCallback((waypointId: string, nextLabel: string) => {
     dispatch({ type: 'route/rename-waypoint', waypointId, nextLabel })
+  }, [dispatch])
+
+  const handleMatchSharedName = useCallback<RouteMapProps['onMatchSharedName']>((waypointId, routeId, otherWaypointId, direction) => {
+    dispatch({ type: 'route/match-shared-name', waypointId, routeId, otherWaypointId, direction })
   }, [dispatch])
 
   const handleSetAltLabels = useCallback((waypointId: string, altLabels: string[]) => {
@@ -248,7 +257,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
 
   const handleToggleWaypointKind = useCallback((waypointId: string) => {
     startTransition(() => {
-      dispatch({ type: 'route/toggle-waypoint-kind', waypointId })
+      dispatch({ type: 'route/toggle-waypoint-kind', waypointId, labelSeed: Math.floor(Math.random() * 1_000_000) })
     })
   }, [dispatch])
 
@@ -301,8 +310,8 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
   }
 
   function handleNewSession() {
-    if (savingRouteIdsRef.current.size > 0) {
-      setFileSaveStatus('Wait for the current file save to finish before starting a new session.')
+    if (fileOperationRouteIdsRef.current.size > 0) {
+      setFileSaveStatus('Wait for the current file operation to finish before starting a new session.')
       return
     }
     if (!window.confirm('Start a new session? This clears all loaded routes, source text, undo history, and recovery data. Any work not saved locally will be lost. Files on disk will not be deleted.')) return
@@ -489,9 +498,9 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
 
   async function handleSaveRouteToFile(routeId: string) {
     const route = state.loadedRoutes.find((candidate) => candidate.id === routeId)
-    if (!route || savingRouteIdsRef.current.has(routeId)) return
-    savingRouteIdsRef.current.add(routeId)
-    setSavingRouteIds(new Set(savingRouteIdsRef.current))
+    if (!route || fileOperationRouteIdsRef.current.has(routeId)) return
+    fileOperationRouteIdsRef.current.add(routeId)
+    setFileOperationRouteIds(new Set(fileOperationRouteIdsRef.current))
     try {
       const entry = routeFileHandlesRef.current.get(routeId)
       let handle = entry?.filename === route.filename ? entry.handle : undefined
@@ -519,27 +528,39 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
       if (error instanceof DOMException && error.name === 'AbortError') return
       setFileSaveStatus(`Unable to save ${route.filename}: ${errorMessage(error)}`)
     } finally {
-      savingRouteIdsRef.current.delete(routeId)
-      setSavingRouteIds(new Set(savingRouteIdsRef.current))
+      fileOperationRouteIdsRef.current.delete(routeId)
+      setFileOperationRouteIds(new Set(fileOperationRouteIdsRef.current))
     }
   }
 
-  async function handleCopyLoadedRoute(routeId: string) {
+  async function handleRefreshRoute(routeId: string) {
     const route = state.loadedRoutes.find((candidate) => candidate.id === routeId)
-    if (!route) {
+    if (!route || fileOperationRouteIdsRef.current.has(routeId)) return
+    const entry = routeFileHandlesRef.current.get(routeId)
+    if (!entry) {
+      setFileSaveStatus(`No linked file for ${route.filename}. Open its folder with Add Folder or save it to a file before refreshing.`)
       return
     }
+    if (isRouteDirty(state, savedSources, routeId) &&
+        !window.confirm(`Refresh ${route.filename} from disk and replace its unsaved edits? You can undo this refresh.`)) return
 
-    const text = route.inputText
-    if (!text) {
-      return
-    }
-
+    fileOperationRouteIdsRef.current.add(routeId)
+    setFileOperationRouteIds(new Set(fileOperationRouteIdsRef.current))
     try {
-      await navigator.clipboard.writeText(text)
-      setFileSaveStatus(`Copied ${route.filename}.`)
+      const inputText = await (await entry.handle.getFile()).text()
+      const currentRoute = currentRoutesRef.current.find((candidate) => candidate.id === routeId)
+      if (!currentRoute || currentRoute.inputText !== route.inputText || currentRoute.filename !== route.filename) {
+        setFileSaveStatus(`Refresh cancelled: ${route.filename} changed or was removed while reading the file. Your edits were kept.`)
+        return
+      }
+      dispatch({ type: 'routes/refresh', routeId, inputText })
+      markSaved(routeId, entry.filename, inputText)
+      setFileSaveStatus(`Refreshed ${route.filename} from ${entry.handle.name}.`)
     } catch (error) {
-      setFileSaveStatus(`Unable to copy ${route.filename}: ${errorMessage(error)}`)
+      setFileSaveStatus(`Unable to refresh ${route.filename}: ${errorMessage(error)}`)
+    } finally {
+      fileOperationRouteIdsRef.current.delete(routeId)
+      setFileOperationRouteIds(new Set(fileOperationRouteIdsRef.current))
     }
   }
 
@@ -668,7 +689,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
                 <button type="button" onClick={handleAddFolder}>Add Folder</button>
                 <button type="button" onClick={handleReverseRoute}>Reverse order</button>
                 <button type="button" onClick={handleClearRoute}>Clear</button>
-                <button type="button" onClick={handleNewSession} disabled={savingRouteIds.size > 0}>New session</button>
+                <button type="button" onClick={handleNewSession} disabled={fileOperationRouteIds.size > 0}>New session</button>
                 <button type="button" onClick={handleSaveToTab}>Save to Tab</button>
                 <button type="button" onClick={handleDownload}>Download</button>
               </div>
@@ -715,11 +736,12 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
                         <button
                           type="button"
                           className="loaded-route-copy"
-                          onClick={() => handleCopyLoadedRoute(route.id)}
-                          title="Copy full route"
-                          aria-label={`Copy full route ${route.filename}`}
+                          onClick={() => handleRefreshRoute(route.id)}
+                          title="Refresh route from linked file"
+                          aria-label={`Refresh route ${route.filename} from file`}
+                          disabled={fileOperationRouteIds.has(route.id)}
                         >
-                          📎
+                          &#8635;
                         </button>
                         <button
                           type="button"
@@ -736,7 +758,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
                           onClick={() => handleSaveRouteToFile(route.id)}
                           title="Save route to file"
                           aria-label={`Save route ${route.filename} to file`}
-                          disabled={savingRouteIds.has(route.id) || !canSaveRouteToFile()}
+                          disabled={fileOperationRouteIds.has(route.id) || !canSaveRouteToFile()}
                         >
                           💾
                         </button>
@@ -783,8 +805,10 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
               lineWeight={lineWeight}
               issues={state.issues}
               inUseLabels={state.loadedLabelSet}
+              onSelectRoute={handleSetActiveRoute}
               onInsertWaypoint={handleMapInsert}
               onRenameWaypoint={handleRenameWaypoint}
+              onMatchSharedName={handleMatchSharedName}
               onSetAltLabels={handleSetAltLabels}
               onToggleWaypointKind={handleToggleWaypointKind}
               onDeleteWaypoint={handleDeleteWaypoint}
