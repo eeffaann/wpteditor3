@@ -4,6 +4,8 @@ import { CircleMarker as LeafletCircleMarker, LatLngBounds, divIcon } from 'leaf
 import type { ParseIssue, Waypoint } from '../editor/editorTypes'
 import { sameCoordinate, toCoordinateKey, toMercatorPoint } from '../wpt/geometry'
 import { WaypointPopupContent } from './WaypointPopup'
+import { WaypointDragHandler } from './WaypointDragHandler'
+import type { WaypointDragStart } from './WaypointDragHandler'
 
 export type RouteMapProps = {
   waypoints: Waypoint[]
@@ -48,9 +50,10 @@ type DraggingSharedStation = {
   lon: number
 }
 
-type DraggingTarget =
+type DraggingTarget = (
   | { kind: 'waypoint'; payload: DraggingWaypoint }
   | { kind: 'shared-station'; payload: DraggingSharedStation }
+) & { start: WaypointDragStart }
 
 type BackgroundStationMember = {
   routeId: string
@@ -312,53 +315,6 @@ function MapInsertionHandler({
     },
     [],
   )
-
-  return null
-}
-
-function WaypointDragHandler({
-  isDragging,
-  onPreviewWaypoint,
-  onCommitWaypoint,
-}: {
-  isDragging: boolean
-  onPreviewWaypoint: (lat: number, lon: number) => void
-  onCommitWaypoint: (lat: number, lon: number) => void
-}) {
-  const map = useMap()
-
-  useEffect(() => {
-    if (!isDragging) {
-      return
-    }
-
-    const wasDraggingEnabled = map.dragging.enabled()
-    const wasDoubleClickZoomEnabled = map.doubleClickZoom.enabled()
-    map.dragging.disable()
-    map.doubleClickZoom.disable()
-
-    return () => {
-      if (wasDraggingEnabled) map.dragging.enable()
-      if (wasDoubleClickZoomEnabled) map.doubleClickZoom.enable()
-    }
-  }, [isDragging, map])
-
-  useMapEvents({
-    mousemove(event) {
-      if (!isDragging) {
-        return
-      }
-
-      onPreviewWaypoint(event.latlng.lat, event.latlng.lng)
-    },
-    mouseup(event) {
-      if (!isDragging) {
-        return
-      }
-
-      onCommitWaypoint(event.latlng.lat, event.latlng.lng)
-    },
-  })
 
   return null
 }
@@ -705,7 +661,8 @@ export const RouteMap = memo(function RouteMap({
           suppressExternalClickUntil={suppressExternalClickUntil}
         />
         <WaypointDragHandler
-          isDragging={draggingTarget !== null}
+          start={draggingTarget?.start ?? null}
+          onCancel={() => setDraggingTarget(null)}
           onPreviewWaypoint={(lat, lon) => {
             setDraggingTarget((current) => {
               if (!current) {
@@ -908,14 +865,19 @@ export const RouteMap = memo(function RouteMap({
                     onUnhoverWaypoint()
                   },
                   mousedown: (event) => {
-                    if (focusWaypointId !== waypoint.id) {
+                    if (focusWaypointId !== waypoint.id || event.originalEvent.button !== 0) {
                       return
                     }
 
                     event.originalEvent.preventDefault()
                     event.originalEvent.stopPropagation()
+                    const start: WaypointDragStart = {
+                      pointer: event.containerPoint,
+                      position: [waypoint.lat, waypoint.lon],
+                    }
                     if (isInterchange) {
                       setDraggingTarget({
+                        start,
                         kind: 'shared-station',
                         payload: {
                           sourceLat: waypoint.lat,
@@ -928,6 +890,7 @@ export const RouteMap = memo(function RouteMap({
                     }
 
                     setDraggingTarget({
+                      start,
                       kind: 'waypoint',
                       payload: {
                         waypointId: waypoint.id,

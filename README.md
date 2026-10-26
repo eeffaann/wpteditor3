@@ -45,6 +45,10 @@ with a diagnostic and are not sent to the map.
 Alternate labels remain route-specific in either mode. Hidden geometry-point names are
 not harmonized. Shared-station dragging still updates matching coordinates in both modes.
 
+To move a point, select it, then drag it at least 5 pixels. Clicks and smaller mouse
+movements leave its coordinates unchanged. Dragging preserves where you grabbed the
+marker, so an off-center grab does not make it jump toward the cursor.
+
 At a shared station, the popup lists the names used by concurrent routes. Use either
 direction to match primary names; alternate labels and coordinates are left unchanged.
 Independent mode changes only the selected point on the selected route. Shared mode
