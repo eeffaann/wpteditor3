@@ -571,7 +571,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
     if (!route || fileOperationRouteIdsRef.current.has(routeId)) return
     const entry = routeFileHandlesRef.current.get(routeId)
     if (!entry) {
-      setFileSaveStatus(`No linked file for ${route.filename}. Use Open route or Add Folder, or save it to a file before refreshing.`)
+      setFileSaveStatus(`No linked file for ${route.filename}. Use Add or Add Folder, or save it to a file before refreshing.`)
       return
     }
     if (isRouteDirty(state, savedSources, routeId) &&
@@ -723,8 +723,8 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
                     aria-label="Open route file"
                     onChange={handleRouteInputChange}
                   />
-                  <button type="button" onClick={handleNewRoute}>New route</button>
-                  <button type="button" onClick={handleOpenRoute}>Open route</button>
+                  <button type="button" onClick={handleNewRoute}>New</button>
+                  <button type="button" onClick={handleOpenRoute}>Add</button>
                   <button type="button" onClick={handleAddFolder}>Add Folder</button>
                   {!state.activeRouteId && state.inputText.trim() ? (
                     <button type="button" onClick={handleLoadPastedRoute}>Load pasted route</button>
@@ -734,7 +734,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
               <div className="route-source-action-group" role="group" aria-label="Edit route">
                 <span className="route-source-group-label" aria-hidden="true">Edit route</span>
                 <div className="inline-actions route-source-actions">
-                  <button type="button" onClick={handleReverseRoute}>Reverse order</button>
+                  <button type="button" onClick={handleReverseRoute}>Reverse</button>
                   <button type="button" onClick={handleClearRoute}>Clear</button>
                 </div>
               </div>

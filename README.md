@@ -12,7 +12,7 @@ validation. Built with React, TypeScript, Vite, and Leaflet.
 2. Choose **Independent names** before loading files for a review that must not
    automatically change names. The default **Shared names** mode can change imported
    routes to match names already loaded at the same coordinates.
-3. Use **Open route** or **Add Folder**, then select a route in Loaded Routes. List
+3. Use **Add** or **Add Folder**, then select a route in Loaded Routes. List
    selection fits the map; clicking a background route line selects it without moving
    the map. Review source, table, and validation together.
 4. Make small edits. Source edits apply immediately; map and table edits update the
@@ -34,14 +34,14 @@ or CSS selectors.
 
 | Action | Effect |
 | --- | --- |
-| **New route** | Creates a blank route; other loaded routes remain intact. |
-| **Open route** / **Add Folder** | Adds `.wpt` files, retaining handles for direct save-back where supported. |
+| **New** | Creates a blank route; other loaded routes remain intact. |
+| **Add** / **Add Folder** | Adds `.wpt` files, retaining handles for direct save-back where supported. |
 | **Load pasted route** | Adds a nonempty source draft to Loaded Routes; only appears before a route is active. |
-| **Reverse order** / **Clear** | Edits the active route; both can be undone. |
+| **Reverse** / **Clear** | Edits the active route; both can be undone. |
 | **Open text in new tab** / **Download** | Exports the current source without marking it saved locally. |
 | **New session** | Clears the workspace and recovery after confirmation; cannot be undone. Keeps the naming preference and never deletes disk files. |
 
-New/open actions ask before discarding a source draft. Undo retains up to 20 edits.
+New/add actions ask before discarding a source draft. Undo retains up to 20 edits.
 Finish file saves or refreshes before starting a new session.
 
 ## Editing behavior
