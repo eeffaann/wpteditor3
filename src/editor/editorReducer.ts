@@ -759,7 +759,7 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
         inputText: nextActiveRoute.inputText,
         waypoints: nextActiveRoute.waypoints,
         issues: nextActiveRoute.issues,
-        fitRequest: state.fitRequest + 1,
+        fitRequest: action.fitToRoute === false ? state.fitRequest : state.fitRequest + 1,
       }
     }
 

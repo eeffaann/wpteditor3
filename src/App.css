@@ -33,10 +33,6 @@
   font: 600 0.78rem/1 var(--mono);
 }
 
-.intro-copy {
-  max-width: 62ch;
-}
-
 .status-strip {
   display: grid;
   grid-template-columns: repeat(2, minmax(150px, 1fr));
@@ -177,11 +173,32 @@ textarea:focus-visible {
 
 .route-source-toolbar {
   display: flex;
-  justify-content: flex-start;
-  padding: 6px;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: rgba(255, 250, 244, 0.72);
+}
+
+.route-source-action-group {
+  display: grid;
+  flex: 1 1 180px;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.route-source-group-label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.route-source-session-actions {
+  flex-basis: 100%;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
 }
 
 .route-source-actions {
@@ -199,6 +216,15 @@ textarea:focus-visible {
   margin: 0;
   color: var(--text-muted);
   font-size: 0.84rem;
+}
+
+.naming-mode-help summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.naming-mode-help p {
+  margin: 6px 0 0;
 }
 
 .route-source-actions button {

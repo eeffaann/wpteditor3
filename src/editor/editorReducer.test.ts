@@ -104,6 +104,23 @@ describe('editor state', () => {
     expect(state.inputText).toContain('Typed')
   })
 
+  it('selects a route without requesting a map fit when explicitly disabled', () => {
+    const original = load('independent')
+    const state = editorReducer(original, { type: 'routes/set-active', routeId: 'two', fitToRoute: false })
+    expect(state.activeRouteId).toBe('two')
+    expect(state.waypoints[0].label).toBe('Other')
+    expect(state.fitRequest).toBe(original.fitRequest)
+    expectSynchronized(state)
+  })
+
+  it('still requests a map fit for normal route selection', () => {
+    const original = load()
+    const state = editorReducer(original, { type: 'routes/set-active', routeId: 'two' })
+    expect(state.activeRouteId).toBe('two')
+    expect(state.fitRequest).toBe(original.fitRequest + 1)
+    expectSynchronized(state)
+  })
+
   it.each([
     { type: 'route/insert', lat: 40.5, lon: -75.5, hidden: true, labelSeed: 654321 },
     { type: 'route/set-alt-labels', waypointId: '1-Alpha', altLabels: ['Alternate'] },

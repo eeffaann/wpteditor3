@@ -50,6 +50,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
   const routeSourceHighlightRef = useRef<HTMLPreElement | null>(null)
   const routeTableShellRef = useRef<HTMLDivElement | null>(null)
   const folderInputRef = useRef<HTMLInputElement | null>(null)
+  const routeInputRef = useRef<HTMLInputElement | null>(null)
   const mapWrapperRef = useRef<HTMLElement | null>(null)
   const routeFileHandlesRef = useRef(new Map<string, { handle: RouteFileHandle; filename: string }>())
   const fileOperationRouteIdsRef = useRef(new Set<string>())
@@ -173,58 +174,90 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
     return typeof pickerWindow.showSaveFilePicker === 'function'
   }
 
-  function handleAddRoute() {
-    const inputText = state.inputText.trim()
-    if (!inputText) {
-      return
-    }
+  function canLeaveDraft() {
+    return !!state.activeRouteId || !state.inputText ||
+      window.confirm('Discard the current source draft? Use Load pasted route first to keep it as a loaded route.')
+  }
 
-    const parsedRoute = parseWpt(state.inputText)
-    const filename = nextGeneratedRouteFilename()
-    const routeId = crypto.randomUUID()
-
+  function handleNewRoute() {
+    if (!canLeaveDraft()) return
     startTransition(() => {
       dispatch({
         type: 'routes/add-route',
-        route: {
-          id: routeId,
-          filename,
-          inputText: state.inputText,
-          originalInputText: state.activeRouteId ? state.inputText : state.draftBaseline ?? state.inputText,
-          waypoints: parsedRoute.waypoints,
-          issues: parsedRoute.issues,
-        },
+        route: buildLoadedRoute(nextGeneratedRouteFilename(), ''),
       })
     })
+    setFocusedWaypointId(null)
+    setFocusRequest(0)
+    setFileSaveStatus('')
+    routeSourceRef.current?.focus()
   }
 
-  function handleReplaceRoute() {
-    const inputText = state.inputText.trim()
-    if (!inputText) {
+  function openLoadedRoute(route: LoadedRoute, handle?: RouteFileHandle) {
+    if (handle) routeFileHandlesRef.current.set(route.id, { handle, filename: route.filename })
+    markSaved(route.id, route.filename, route.inputText)
+    dispatch({ type: 'routes/add-route', route })
+    setFocusedWaypointId(null)
+    setFocusRequest(0)
+    setFileSaveStatus(handle
+      ? 'Opened file-backed route. Shared-name mode may mark imported routes as modified.'
+      : 'Opened route. Direct save-back is unavailable; use Save As or Download. Shared-name mode may mark imported routes as modified.')
+  }
+
+  async function handleOpenRoute() {
+    if (!canLeaveDraft()) return
+    const pickerWindow = window as RoutePickerWindow
+    if (!pickerWindow.showOpenFilePicker) {
+      routeInputRef.current?.click()
       return
     }
 
-    const parsedRoute = parseWpt(state.inputText)
-    const activeRoute = state.loadedRoutes.find((route) => route.id === state.activeRouteId)
-    const filename = activeRoute?.filename ?? nextGeneratedRouteFilename()
-    const routeId = activeRoute?.id ?? crypto.randomUUID()
+    try {
+      const [handle] = await pickerWindow.showOpenFilePicker({
+        multiple: false,
+        types: [{ description: 'TravelMapping waypoint file', accept: { 'text/plain': ['.wpt'] } }],
+      })
+      if (!handle) return
+      if (!handle.name.toLowerCase().endsWith('.wpt')) {
+        setFileSaveStatus('Unable to open route: select a .wpt file.')
+        return
+      }
+      openLoadedRoute(buildLoadedRoute(handle.name, await (await handle.getFile()).text()), handle)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      setFileSaveStatus(`Unable to open route: ${errorMessage(error)}`)
+    }
+  }
 
+  async function handleRouteInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    try {
+      if (!file) return
+      if (!file.name.toLowerCase().endsWith('.wpt')) {
+        setFileSaveStatus('Unable to open route: select a .wpt file.')
+        return
+      }
+      openLoadedRoute(buildLoadedRoute(file.name, await file.text()))
+    } catch (error) {
+      setFileSaveStatus(`Unable to open route: ${errorMessage(error)}`)
+    } finally {
+      input.value = ''
+    }
+  }
+
+  function handleLoadPastedRoute() {
+    if (state.activeRouteId || !state.inputText.trim()) return
+    const route = buildLoadedRoute(nextGeneratedRouteFilename(), state.inputText)
     startTransition(() => {
       dispatch({
-        type: 'routes/replace-active-route',
-        route: {
-          id: routeId,
-          filename,
-          inputText: state.inputText,
-          originalInputText: activeRoute?.originalInputText ?? state.draftBaseline ?? state.inputText,
-          waypoints: parsedRoute.waypoints,
-          issues: parsedRoute.issues,
-        },
+        type: 'routes/add-route',
+        route: { ...route, originalInputText: state.draftBaseline ?? state.inputText },
       })
     })
   }
 
-  function handleSaveToTab() {
+  function handleOpenTextInTab() {
     const text = state.inputText
 
     if (!text) {
@@ -458,8 +491,8 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
     }
   }
 
-  function handleSetActiveRoute(routeId: string) {
-    dispatch({ type: 'routes/set-active', routeId })
+  function handleSetActiveRoute(routeId: string, fitToRoute = true) {
+    dispatch({ type: 'routes/set-active', routeId, fitToRoute })
     setFocusedWaypointId(null)
     setFocusRequest((current) => current + 1)
   }
@@ -507,7 +540,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
       if (!handle) {
         const pickerWindow = window as RoutePickerWindow
         if (!pickerWindow.showSaveFilePicker) {
-          setFileSaveStatus('Direct saving is unavailable. Use Download or Save to Tab.')
+          setFileSaveStatus('Direct saving is unavailable. Use Download or Open text in new tab.')
           return
         }
         handle = await pickerWindow.showSaveFilePicker({
@@ -538,7 +571,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
     if (!route || fileOperationRouteIdsRef.current.has(routeId)) return
     const entry = routeFileHandlesRef.current.get(routeId)
     if (!entry) {
-      setFileSaveStatus(`No linked file for ${route.filename}. Open its folder with Add Folder or save it to a file before refreshing.`)
+      setFileSaveStatus(`No linked file for ${route.filename}. Use Open route or Add Folder, or save it to a file before refreshing.`)
       return
     }
     if (isRouteDirty(state, savedSources, routeId) &&
@@ -628,10 +661,6 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
         <div>
           <p className="eyebrow">TravelMapping Route Workbench</p>
           <h1>WPT Editor 3</h1>
-          <p className="intro-copy">
-            Paste TravelMapping waypoint lines, load them into the map, reverse the route,
-            inspect parse issues, and export the current state in `.wpt` form.
-          </p>
         </div>
         <div className="status-strip" aria-label="Editor summary">
           <div>
@@ -651,7 +680,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
             <div className="panel-heading">
               <div>
                 <h2>Route Source</h2>
-                <p>Paste `.wpt` file lines and load them into the route view.</p>
+                {!state.inputText ? <p>Paste .wpt lines or open a route.</p> : null}
               </div>
             </div>
             <div className="route-source-editor">
@@ -674,24 +703,53 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
                 placeholder={'+X865456 http://www.openstreetmap.org/?lat=40.034301&lon=116.574318\nSanYuanQiao http://www.openstreetmap.org/?lat=39.959631&lon=116.451463'}
               />
             </div>
-            <div className="route-source-toolbar route-source-toolbar-bottom">
-              <div className="inline-actions route-source-actions">
-                <input
-                  ref={folderInputRef}
-                  className="folder-picker-input"
-                  type="file"
-                  accept=".wpt"
-                  multiple
-                  onChange={handleFolderInputChange}
-                />
-                <button type="button" onClick={handleAddRoute}>Add Route</button>
-                <button type="button" onClick={handleReplaceRoute}>Replace Route</button>
-                <button type="button" onClick={handleAddFolder}>Add Folder</button>
-                <button type="button" onClick={handleReverseRoute}>Reverse order</button>
-                <button type="button" onClick={handleClearRoute}>Clear</button>
-                <button type="button" onClick={handleNewSession} disabled={fileOperationRouteIds.size > 0}>New session</button>
-                <button type="button" onClick={handleSaveToTab}>Save to Tab</button>
-                <button type="button" onClick={handleDownload}>Download</button>
+            <div className="route-source-toolbar">
+              <div className="route-source-action-group" role="group" aria-label="Routes">
+                <span className="route-source-group-label" aria-hidden="true">Routes</span>
+                <div className="inline-actions route-source-actions">
+                  <input
+                    ref={folderInputRef}
+                    className="folder-picker-input"
+                    type="file"
+                    accept=".wpt"
+                    multiple
+                    onChange={handleFolderInputChange}
+                  />
+                  <input
+                    ref={routeInputRef}
+                    className="folder-picker-input"
+                    type="file"
+                    accept=".wpt"
+                    aria-label="Open route file"
+                    onChange={handleRouteInputChange}
+                  />
+                  <button type="button" onClick={handleNewRoute}>New route</button>
+                  <button type="button" onClick={handleOpenRoute}>Open route</button>
+                  <button type="button" onClick={handleAddFolder}>Add Folder</button>
+                  {!state.activeRouteId && state.inputText.trim() ? (
+                    <button type="button" onClick={handleLoadPastedRoute}>Load pasted route</button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="route-source-action-group" role="group" aria-label="Edit route">
+                <span className="route-source-group-label" aria-hidden="true">Edit route</span>
+                <div className="inline-actions route-source-actions">
+                  <button type="button" onClick={handleReverseRoute}>Reverse order</button>
+                  <button type="button" onClick={handleClearRoute}>Clear</button>
+                </div>
+              </div>
+              <div className="route-source-action-group" role="group" aria-label="Export">
+                <span className="route-source-group-label" aria-hidden="true">Export</span>
+                <div className="inline-actions route-source-actions">
+                  <button type="button" onClick={handleOpenTextInTab}>Open text in new tab</button>
+                  <button type="button" onClick={handleDownload}>Download</button>
+                </div>
+              </div>
+              <div className="route-source-action-group route-source-session-actions" role="group" aria-label="Session">
+                <span className="route-source-group-label" aria-hidden="true">Session</span>
+                <div className="inline-actions route-source-actions">
+                  <button type="button" onClick={handleNewSession} disabled={fileOperationRouteIds.size > 0}>New session</button>
+                </div>
               </div>
             </div>
             <label className="naming-mode-picker">
@@ -701,9 +759,14 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
                 <option value="independent">Independent names</option>
               </select>
             </label>
-            <p className="naming-mode-help">{state.namingMode === 'shared'
-              ? 'Visible waypoints at matching coordinates share a name. Imports use the first loaded name; edits propagate across routes.'
-              : 'Each route keeps its own waypoint names. Shared-station dragging still moves matching coordinates together.'}</p>
+            {state.namingMode === 'shared' ? <p className="naming-mode-help">Edits propagate across routes.</p> : null}
+            <details className="naming-mode-help">
+              <summary>Naming details</summary>
+              <p>{state.namingMode === 'shared'
+                ? 'Visible waypoints at matching coordinates share a name. Imports use the first loaded name.'
+                : 'Each route keeps its own waypoint names.'}</p>
+              <p>Shared-station dragging moves matching coordinates together in either mode.</p>
+            </details>
             {!state.activeRouteId && state.inputText ? <p>{state.draftBaseline === null
               ? 'New route source'
               : state.inputText === state.draftBaseline ? 'Unmodified pasted source' : 'Modified pasted source'} · not saved locally</p> : null}
@@ -789,7 +852,6 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
             <div className="panel-heading compact">
               <div>
                 <h2>Route Map</h2>
-                <p>Current vertical slice: route rendering, fit-to-route, and table-driven editing.</p>
               </div>
               <div className="inline-actions">
                 <button type="button" onClick={handleUndo} disabled={state.history.length === 0}>Undo</button>
@@ -805,7 +867,7 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
               lineWeight={lineWeight}
               issues={state.issues}
               inUseLabels={state.loadedLabelSet}
-              onSelectRoute={handleSetActiveRoute}
+              onSelectRoute={(routeId) => handleSetActiveRoute(routeId, false)}
               onInsertWaypoint={handleMapInsert}
               onRenameWaypoint={handleRenameWaypoint}
               onMatchSharedName={handleMatchSharedName}
@@ -831,7 +893,6 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
             <div className="panel-heading compact">
               <div>
                 <h2>Validation</h2>
-                <p>Strict parser feedback for malformed waypoint lines.</p>
               </div>
             </div>
             {state.issues.length === 0 ? (

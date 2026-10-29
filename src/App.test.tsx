@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import type { RouteMapProps } from './map/RouteMap'
@@ -9,6 +9,10 @@ vi.mock('./map/RouteMap', () => ({
   RouteMap: (props: RouteMapProps) => (
     <div>
       <span data-testid="map-labels">{props.waypoints.map((waypoint) => waypoint.label).join(',')}</span>
+      <span data-testid="map-fit-request">{props.fitRequest}</span>
+      {props.backgroundRoutes.map((route) => (
+        <button key={route.id} onClick={() => props.onSelectRoute(route.id)}>Select {route.filename} on map</button>
+      ))}
       <button onClick={() => props.onRenameWaypoint(props.waypoints[0].id, 'MapRenamed')}>Rename on map</button>
       <button onClick={() => props.onInsertWaypoint(true, 40.5, -75.5)}>Add geometry on map</button>
       <button onClick={() => props.onToggleWaypointKind(props.waypoints[0].id)}>Toggle first waypoint</button>
@@ -30,12 +34,17 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   delete pickerWindow.showSaveFilePicker
+  delete pickerWindow.showOpenFilePicker
   delete pickerWindow.showDirectoryPicker
 })
 
 function addRoute(value = text) {
+  if (screen.queryByRole('heading', { name: 'Loaded Routes' })) {
+    fireEvent.click(screen.getByRole('button', { name: 'New route' }))
+  }
   fireEvent.change(source(), { target: { value } })
-  fireEvent.click(screen.getByRole('button', { name: 'Add Route' }))
+  const loadDraft = screen.queryByRole('button', { name: 'Load pasted route' })
+  if (loadDraft) fireEvent.click(loadDraft)
 }
 
 function fileHandle() {
@@ -55,6 +64,132 @@ async function addFileRoute(handle: ReturnType<typeof fileHandle>) {
 }
 
 describe('editor UI integration', () => {
+  it('only offers draft loading before a route is active and applies later edits live', () => {
+    render(<App />)
+    expect(screen.getByText('Paste .wpt lines or open a route.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Load pasted route' })).toBeNull()
+    fireEvent.change(source(), { target: { value: '   ' } })
+    expect(screen.queryByRole('button', { name: 'Load pasted route' })).toBeNull()
+    fireEvent.change(source(), { target: { value: text } })
+    expect(screen.queryByText('Paste .wpt lines or open a route.')).toBeNull()
+    fireEvent.click(within(screen.getByRole('group', { name: 'Routes' })).getByRole('button', { name: 'Load pasted route' }))
+    expect(screen.queryByRole('button', { name: 'Load pasted route' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Replace Route' })).toBeNull()
+    fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Live') } })
+    expect(screen.getByTestId('map-labels').textContent).toContain('Live')
+    expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(screen.getByRole('button', { name: 'Load pasted route' })).toBeTruthy()
+  })
+
+  it('keeps naming details collapsed while showing the cross-route warning', () => {
+    render(<App />)
+    const details = screen.getByText('Naming details').closest('details')!
+    expect(details.open).toBe(false)
+    expect(screen.getByText('Edits propagate across routes.')).toBeTruthy()
+    expect(within(details).getByText('Visible waypoints at matching coordinates share a name. Imports use the first loaded name.')).toBeTruthy()
+    fireEvent.change(screen.getByRole('combobox', { name: 'Names at shared coordinates' }), { target: { value: 'independent' } })
+    expect(screen.queryByText('Edits propagate across routes.')).toBeNull()
+    expect(within(details).getByText('Each route keeps its own waypoint names.')).toBeTruthy()
+    expect(within(details).getByText('Shared-station dragging moves matching coordinates together in either mode.')).toBeTruthy()
+  })
+
+  it('groups route, editing, export and session actions separately', () => {
+    render(<App />)
+    const routes = within(screen.getByRole('group', { name: 'Routes' }))
+    expect(routes.getAllByRole('button').map((button) => button.textContent)).toEqual(['New route', 'Open route', 'Add Folder'])
+    const editing = within(screen.getByRole('group', { name: 'Edit route' }))
+    expect(editing.getAllByRole('button').map((button) => button.textContent)).toEqual(['Reverse order', 'Clear'])
+    const exporting = within(screen.getByRole('group', { name: 'Export' }))
+    expect(exporting.getAllByRole('button').map((button) => button.textContent)).toEqual(['Open text in new tab', 'Download'])
+    const session = within(screen.getByRole('group', { name: 'Session' }))
+    expect(session.getAllByRole('button').map((button) => button.textContent)).toEqual(['New session'])
+  })
+
+  it('creates blank routes without changing existing routes and supports undo', () => {
+    render(<App />)
+    expect(screen.queryByRole('button', { name: 'Add Route' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'New route' }))
+    expect(source().value).toBe('')
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+    fireEvent.change(source(), { target: { value: text } })
+    fireEvent.click(screen.getByRole('button', { name: 'New route' }))
+    expect(source().value).toBe('')
+    expect(screen.getByTestId('map-labels').textContent).toBe('')
+    expect(screen.getByText('route-2.wpt (unmodified)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(source().value).toBe(text)
+    expect(screen.queryByText('route-2.wpt (unmodified)')).toBeNull()
+  })
+
+  it('keeps an unregistered draft when creating a route is cancelled', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<App />)
+    fireEvent.change(source(), { target: { value: text } })
+    fireEvent.click(screen.getByRole('button', { name: 'New route' }))
+    expect(source().value).toBe(text)
+    expect(screen.queryByRole('heading', { name: 'Loaded Routes' })).toBeNull()
+  })
+
+  it('opens a file as an active route and retains its handle for saving', async () => {
+    const handle = fileHandle()
+    pickerWindow.showOpenFilePicker = vi.fn().mockResolvedValue([handle])
+    pickerWindow.showSaveFilePicker = vi.fn()
+    render(<App />)
+    addRoute()
+    fireEvent.click(screen.getByRole('button', { name: 'Open route' }))
+    await waitFor(() => expect(screen.getByText('disk.wpt (unmodified)')).toBeTruthy())
+    expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
+    expect(source().value).toBe(text)
+    fireEvent.click(screen.getByRole('button', { name: 'Save route disk.wpt to file' }))
+    await waitFor(() => expect(handle.createWritable).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Saved'))
+    expect(pickerWindow.showSaveFilePicker).not.toHaveBeenCalled()
+  })
+
+  it('opens a route through the fallback file input and resets it for reuse', async () => {
+    render(<App />)
+    const input = screen.getByLabelText('Open route file') as HTMLInputElement
+    const click = vi.spyOn(input, 'click')
+    fireEvent.click(screen.getByRole('button', { name: 'Open route' }))
+    expect(click).toHaveBeenCalledOnce()
+    fireEvent.change(input, { target: { files: [{ name: 'fallback.wpt', text: async () => text }] } })
+    await waitFor(() => expect(screen.getByText('fallback.wpt (unmodified)')).toBeTruthy())
+    expect(source().value).toBe(text)
+    expect(input.value).toBe('')
+    expect(screen.getByRole('status').textContent).toContain('Direct save-back is unavailable')
+  })
+
+  it('keeps the active route when opening is cancelled and reports read failures', async () => {
+    const picker = vi.fn().mockRejectedValue(new DOMException('Cancelled', 'AbortError'))
+    pickerWindow.showOpenFilePicker = picker
+    render(<App />)
+    addRoute()
+    fireEvent.click(screen.getByRole('button', { name: 'Open route' }))
+    await waitFor(() => expect(picker).toHaveBeenCalledOnce())
+    expect(source().value).toBe(text)
+    expect(screen.queryByRole('status')).toBeNull()
+    picker.mockRejectedValue(new Error('Read denied'))
+    fireEvent.click(screen.getByRole('button', { name: 'Open route' }))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Unable to open route: Read denied'))
+    expect(source().value).toBe(text)
+  })
+
+  it('selects a route on the map without fitting, but still fits when selecting from the list', () => {
+    render(<App />)
+    addRoute()
+    addRoute(text.replace('Alpha', 'Other'))
+    const fitRequest = Number(screen.getByTestId('map-fit-request').textContent)
+    fireEvent.click(screen.getByRole('button', { name: 'Select route-1.wpt on map' }))
+    expect(screen.queryByRole('button', { name: 'Select route-1.wpt on map' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Select route-2.wpt on map' })).toBeTruthy()
+    expect(Number(screen.getByTestId('map-fit-request').textContent)).toBe(fitRequest)
+    fireEvent.click(screen.getByRole('button', { name: /route-2\.wpt .*wp/ }))
+    expect(Number(screen.getByTestId('map-fit-request').textContent)).toBe(fitRequest + 1)
+  })
+
   it('starts an empty session, clears recovery and undo, and retains the naming preference', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const view = render(<App />)
@@ -308,7 +443,7 @@ describe('editor UI integration', () => {
     render(<App />)
     fireEvent.paste(source(), { clipboardData: { getData: () => text } })
     expect(screen.getByText('Unmodified pasted source · not saved locally')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Add Route' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load pasted route' }))
     expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
     expect(screen.getByRole('button', { name: /^route-1.wpt/ }).textContent).toContain('not saved locally')
     const warning = new Event('beforeunload', { cancelable: true })
@@ -320,7 +455,7 @@ describe('editor UI integration', () => {
     expect(screen.getByText('route-1.wpt (unmodified)')).toBeTruthy()
   })
 
-  it('keeps the initial paste baseline through editing, Add Route, Replace Route and saving', async () => {
+  it('keeps the initial paste baseline through loading, live editing and saving', async () => {
     pickerWindow.showSaveFilePicker = vi.fn().mockResolvedValue({
       createWritable: vi.fn().mockResolvedValue({ write: vi.fn(), close: vi.fn(), abort: vi.fn() }),
     })
@@ -328,9 +463,9 @@ describe('editor UI integration', () => {
     fireEvent.paste(source(), { clipboardData: { getData: () => text.replace(/\n/g, '\r\n') } })
     fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Edited') } })
     expect(screen.getByText('Modified pasted source · not saved locally')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Add Route' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load pasted route' }))
     expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Replace Route' }))
+    fireEvent.change(source(), { target: { value: text.replace('Alpha', 'Edited again') } })
     expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Save route route-1.wpt to file' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Saved'))

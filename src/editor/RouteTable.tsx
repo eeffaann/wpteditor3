@@ -34,7 +34,7 @@ export function RouteTable({ waypoints, issues, shellRef, onFocus, onHoverLine, 
       <div className="panel-heading compact">
         <div>
           <h2>Route Table</h2>
-          <p>Drag rows to reorder the route, or use the row controls for precise moves.</p>
+          <p>Drag rows to reorder.</p>
         </div>
         <div className="distance-toggle" role="group" aria-label="Distance unit">
           {(['mi', 'km'] as const).map((unit) => (

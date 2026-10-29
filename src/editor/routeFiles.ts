@@ -18,6 +18,10 @@ export type RouteDirectoryHandle = {
 }
 
 export type RoutePickerWindow = Window & {
+  showOpenFilePicker?: (options: {
+    multiple: boolean
+    types: Array<{ description: string; accept: Record<string, string[]> }>
+  }) => Promise<RouteFileHandle[]>
   showDirectoryPicker?: () => Promise<RouteDirectoryHandle>
   showSaveFilePicker?: (options: {
     suggestedName: string

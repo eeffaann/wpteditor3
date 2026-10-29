@@ -1,142 +1,137 @@
 # WPT Editor 3
 
-React + TypeScript + Vite workspace for rebuilding the TravelMapping waypoint editor.
+Browser-based TravelMapping `.wpt` editor with a live map, waypoint table, and source
+validation. Built with React, TypeScript, Vite, and Leaflet.
 
-## Features
+[Open the editor](https://eeffaann.github.io/wpteditor3/).
 
-The app currently includes:
+## Reviewing routes with a human or agent
 
-- `.wpt` parsing for `label URL` lines using OpenStreetMap URLs with `lat` and `lon` query params
-- live source-to-map synchronization, including typed and pasted edits
-- folder loading, multiple active/background routes, route renaming and removal
-- waypoint insertion, dragging, deletion, reordering, alternate labels, and station/geometry conversion
-- shared-station coordinate editing across loaded routes
-- shared-point popups can adopt another route's name or apply the current name to that route
-- randomized six-digit `+X` geometry labels, including converted default `WP` stations
-- route reversal, clear, and undo (up to 20 edits, including multi-route changes)
-- Leaflet rendering and TravelMapping-specific validation with original source-line references
-- waypoint-line copying, exact-source `Save to Tab`, downloads, and direct file saving in supported browsers
-- modified/unmodified indicators, separate local-save status, reload warnings, and local workspace recovery
-- click an unselected route line on the map to make it active
-- scrollable Loaded Routes list for working with many route files
-- refresh file-backed routes from disk directly from Loaded Routes
+1. Agree on the route files, intended changes, and who will write each file. The editor
+   is a local workspace, not a real-time collaboration or file-locking service.
+2. Choose **Independent names** before loading files for a review that must not
+   automatically change names. The default **Shared names** mode can change imported
+   routes to match names already loaded at the same coordinates.
+3. Use **Open route** or **Add Folder**, then select a route in Loaded Routes. List
+   selection fits the map; clicking a background route line selects it without moving
+   the map. Review source, table, and validation together.
+4. Make small edits. Source edits apply immediately; map and table edits update the
+   source. Identify findings by filename, waypoint label, and source line, include the
+   relevant source text, and describe the proposed change. Use **Undo** to back out edits.
+5. Before handing files back, review every affected route, save or download the intended
+   files, and inspect their diffs. A clean validation panel does not establish that a
+   route is correct or passes the full TravelMapping validation suite.
+
+Before an agent changes a file on disk, save browser edits and hand off the file.
+After the agent finishes, use **Refresh route** to read it into the editor rather than
+saving the stale browser copy over the agent's work. Disk edits are not watched
+automatically. Refresh asks before replacing unsaved browser edits; direct saving is
+not a merge operation. Coordinate writes rather than editing the same file concurrently.
+For automated browser interaction, prefer accessible control names over icon glyphs
+or CSS selectors.
+
+## Route controls
+
+| Action | Effect |
+| --- | --- |
+| **New route** | Creates a blank route; other loaded routes remain intact. |
+| **Open route** / **Add Folder** | Adds `.wpt` files, retaining handles for direct save-back where supported. |
+| **Load pasted route** | Adds a nonempty source draft to Loaded Routes; only appears before a route is active. |
+| **Reverse order** / **Clear** | Edits the active route; both can be undone. |
+| **Open text in new tab** / **Download** | Exports the current source without marking it saved locally. |
+| **New session** | Clears the workspace and recovery after confirmation; cannot be undone. Keeps the naming preference and never deletes disk files. |
+
+New/open actions ask before discarding a source draft. Undo retains up to 20 edits.
+Finish file saves or refreshes before starting a new session.
+
+## Editing behavior
+
+The parser reads `label URL` lines with OpenStreetMap `lat` and `lon` query parameters.
+Map/table edits preserve malformed lines, blank lines, and unchanged waypoint formatting.
+Changed coordinates use six decimal places. Invalid coordinates remain in the source
+with diagnostics but are not rendered on the map.
+
+**Names at shared coordinates** controls primary names at coordinates matching to
+six decimal places:
+
+- **Shared names** (default): matches visible station names to the first loaded route;
+  name edits can propagate across routes. Enabling it with routes loaded requires
+  confirmation. Check all affected routes before saving.
+- **Independent names**: keeps route names separate. Switching modes does not undo
+  earlier harmonization; use Undo to revert it.
+
+Alternate labels stay route-specific; hidden geometry names are not harmonized.
+Shared-station dragging moves matching coordinates in either mode. Select a point
+before dragging it at least 5 pixels; smaller movements do not change coordinates.
+Station popups can match primary names between routes without changing alternate labels
+or coordinates. **Naming details** in the editor expands the naming explanation.
+
+Drag table rows or use their move controls to reorder waypoints. New geometry nodes
+and converted default `WP` stations receive random six-digit `+X` labels unique on the route;
+converting a custom station keeps its name with a leading `+`.
 
 The external map-link feature and the full TravelMapping validation suite are not implemented.
 
-## Editing and shared names
+## Saving, refresh, and recovery
 
-Source edits immediately update the route table and map. **Add Route** creates another
-route from the current source; **Replace Route** reloads the current route from that source.
-Map and table edits preserve malformed lines, blank lines, and unchanged waypoint formatting
-instead of discarding source that could not be parsed. Coordinates on changed waypoint lines
-are written with six decimal places. Invalid/out-of-range coordinates remain in the source
-with a diagnostic and are not sent to the map.
+| Status | Meaning |
+| --- | --- |
+| **Unmodified / modified** | Source matches / differs from the original pasted or loaded text. Saving does not reset this comparison. |
+| **Saved locally / changes not saved locally** | Source and filename match / differ from the last successful file read or direct save. |
+| **Not saved locally** | No local-save baseline exists, as with a new or pasted route. |
 
-**Names at shared coordinates** has two modes:
+A first paste into an empty draft establishes its original-text baseline. A route can
+be both modified and saved locally. Downloads, clipboard copies, and text tabs do not
+confirm a disk write or update local-save status.
 
-- **Shared names** (default): visible waypoints at coordinates matching to six decimal places
-  share their primary name. Imports and enabling this mode use the first loaded name;
-  editing a name in the source or popup propagates it to connected routes. Enabling the mode
-  on an existing workspace requires confirmation. Changes are undoable and affected routes
-  are marked unsaved.
-- **Independent names**: each route keeps its own primary and alternate labels. This mode
-  does not undo names already harmonized; use Undo to revert the mode change and its edits.
+Direct file saving requires browser support for the File System Access API. Fallback
+file/folder inputs can load routes but cannot save back directly; use Download instead.
+Renaming changes only the in-memory filename; the next direct save uses Save As.
+Save and storage errors are reported in the editor. Edits made during a save remain unsaved.
 
-Alternate labels remain route-specific in either mode. Hidden geometry-point names are
-not harmonized. Shared-station dragging still updates matching coordinates in both modes.
+**Refresh route** rereads the linked file, preserving route identity and selection.
+It resets original-text and local-save baselines; Undo restores the previous edits.
+In shared-name mode, refresh can also update names in other loaded routes. Edits made
+while a refresh is reading cancel that refresh. Renamed routes retain their old link
+until saved elsewhere. Pasted, fallback-imported, or recovered routes need to be reopened
+with file handles or saved directly before they can refresh.
 
-To move a point, select it, then drag it at least 5 pixels. Clicks and smaller mouse
-movements leave its coordinates unchanged. Dragging preserves where you grabbed the
-marker, so an off-center grab does not make it jump toward the cursor.
+Recovery uses this browser profile's local storage, not a disk backup or cross-device
+sync. It preserves source and save baselines, but not undo history or file handles;
+recovered routes must choose a destination before saving again. Reload/close warnings
+depend on browser support. Save files before relying on recovery or clearing a session.
 
-At a shared station, the popup lists the names used by concurrent routes. Use either
-direction to match primary names; alternate labels and coordinates are left unchanged.
-Independent mode changes only the selected point on the selected route. Shared mode
-continues to harmonize visible names across all routes at that coordinate. Matching
-and refresh changes can be undone.
+## Development
 
-New geometry nodes use random six-digit `+X` names that avoid existing primary labels
-on the route. Converting a default `WP` station also generates a `+X` name; custom
-station names keep their text with a leading `+`.
-
-## Saving and recovery
-
-Route labels show **unmodified** or **modified** relative to the text originally pasted or
-loaded, independently of whether a local file exists. A first paste into an empty source
-also establishes this baseline before adding the route. Reverting edits (including Undo)
-restores the unmodified label when the source matches again. Saving does not reset this
-original-text comparison: a route can be both modified and saved locally.
-
-The smaller local-save status separately shows whether the current source has been saved.
-An unmodified pasted route can still be unsaved locally, and the existing leave-page warning
-continues to protect it. Recovery preserves both the original-text and local-save baselines.
-
-**New session** clears every loaded route, source draft, undo history, file handle, and
-saved-file baseline after confirmation. It immediately replaces local recovery with an
-empty workspace so old routes do not return on reload. It keeps your naming-mode preference
-and never deletes files on disk. Unlike **Clear**, which clears only the current route and
-can be undone, starting a new session cannot be undone. Finish any active file save or refresh first.
-If recovery storage cannot be reset, the editor reports the error and keeps the current workspace.
-
-**Add Folder** uses the File System Access API when available, retaining handles for direct
-save-back. Other browsers use a folder file input and can export with **Download** or
-**Save to Tab**. Renaming a loaded route changes its in-memory filename, not the original
-disk file; its next save uses Save As. Save failures and clipboard failures are shown in the
-editor. A route is marked saved only after the write and close succeed; edits made while
-saving remain unsaved. Downloads, copying, and Save to Tab do not mark source files saved.
-
-**Refresh route** replaces the route-copy button in Loaded Routes and rereads the linked
-disk file, asking before replacing unsaved edits. It keeps the route's identity and the
-current selection. The refreshed file becomes the new original-text and local-save
-baseline; Undo restores the previous edits. In shared-name mode, refreshed station names
-also update concurrent routes. Edits made while a refresh is reading the file cancel that
-refresh instead of being overwritten. A route without a file handle (pasted, imported
-through the fallback file input, or recovered) must first be opened through **Add Folder**
-in a supported browser or saved to a file. Renamed routes still refresh from their original
-linked file until saved elsewhere.
-
-The workspace source, naming mode, and saved-file baselines are stored in this browser's
-local storage after a short debounce and when leaving the page. Recovery is local to this
-site/browser profile; it is not a disk backup or cross-device synchronization. Storage errors
-are reported explicitly. Recovery does not restore undo history or file permissions/handles,
-so saving a recovered route requires choosing its destination again. Reload/close warnings
-depend on browser support. Do not rely on recovery instead of saving files.
-
-## Scripts
-
-- `npm run dev` starts the Vite development server
-- `npm run build` runs TypeScript build validation and creates a production bundle
-- `npm run lint` runs ESLint across the workspace
-- `npm test` runs parser/document, reducer, recovery, file-write, and UI regression tests
-- `npm run preview` serves the production bundle locally
-
-## Local Development
+Use Node.js 22.12 or later.
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Use Node.js 22.12 or later. Pull requests run lint, tests, and a production build.
-The deployment workflow runs the same checks before publishing.
+| Command | Purpose |
+| --- | --- |
+| `npm test` | Parser/document, reducer, recovery, file I/O, and UI regression tests. |
+| `npm run lint` | ESLint. |
+| `npm run build` | TypeScript checks and production bundle. |
+| `npm run preview` | Serve the production bundle locally. |
+
+Pull requests and deployment run lint, tests, and build.
+
+### Code organization
+
+- `src/wpt`: parsing, lossless source edits, export, validation, shared geometry.
+- `src/editor`: reducer, route table, file I/O, dirty tracking, workspace recovery.
+- `src/map`: Leaflet rendering, interactions, and waypoint popups.
+
+Keep UI copy focused on actions and consequences. Use code comments for non-obvious
+constraints, not narration. Preserve malformed source and the distinction between
+original-text and local-save baselines when changing editor behavior.
 
 ## Deployment
 
-The app is hosted on GitHub Pages at https://eeffaann.github.io/wpteditor3/.
-Vite's base path is `/wpteditor3/` so built assets resolve under the repository URL.
-
-In the repository's **Settings > Pages**, set **Build and deployment > Source**
-to **GitHub Actions**. The `Deploy to GitHub Pages` workflow builds and deploys
-the `dist` directory on pushes to `master`, or when run manually from the
-Actions tab. No Azure resources or deployment secrets are needed.
-
-The first deployment happens after the workflow is committed and pushed to
-`master`. The previous Azure Static Web Apps workflow has been removed; any
-existing Azure resource and its repository deployment secret can be deleted
-separately if no longer needed.
-
-## Code organization
-
-- `src/wpt`: parsing, lossless source reconciliation, export, validation, and shared geometry
-- `src/editor`: reducer, route table, file I/O, dirty tracking, and workspace recovery
-- `src/map`: Leaflet rendering/interactions and waypoint popup editing
+GitHub Pages serves the app with Vite base path `/wpteditor3/`. Set repository
+**Settings > Pages > Build and deployment > Source** to **GitHub Actions**.
+The `Deploy to GitHub Pages` workflow publishes `dist` after pushes to `master`
+or a manual run from Actions. No deployment secrets are required.

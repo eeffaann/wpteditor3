@@ -81,7 +81,7 @@ export type EditorAction =
   | { type: 'route/clear' }
   | { type: 'routes/load-folder'; routes: LoadedRoute[] }
   | { type: 'routes/add-folder'; routes: LoadedRoute[] }
-  | { type: 'routes/set-active'; routeId: string }
+  | { type: 'routes/set-active'; routeId: string; fitToRoute?: boolean }
   | { type: 'routes/refresh'; routeId: string; inputText: string }
   | { type: 'routes/rename'; routeId: string; filename: string }
   | { type: 'routes/remove'; routeId: string }

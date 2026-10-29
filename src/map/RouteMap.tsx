@@ -150,14 +150,16 @@ function sampleWaypointsForCorridor(waypoints: Waypoint[], targetPointCount: num
 
 function FitToRoute({ fitRequest, waypoints }: Pick<RouteMapProps, 'fitRequest' | 'waypoints'>) {
   const map = useMap()
-  const lastAppliedFitRequest = useRef(0)
+  const lastHandledFitRequest = useRef(0)
 
   useEffect(() => {
-    if (fitRequest === 0 || fitRequest === lastAppliedFitRequest.current || waypoints.length === 0) {
+    if (fitRequest === 0 || fitRequest === lastHandledFitRequest.current) {
       return
     }
 
-    lastAppliedFitRequest.current = fitRequest
+    // Consume empty-route requests so later route selection cannot replay them.
+    lastHandledFitRequest.current = fitRequest
+    if (waypoints.length === 0) return
     map.invalidateSize()
 
     if (waypoints.length === 1) {
@@ -333,7 +335,6 @@ function BackgroundStationPopupContent({
   const activeMembers = group.members.filter((member) => member.isActive)
   const backgroundMembers = group.members.filter((member) => !member.isActive)
 
-  // Calculate nearest active station to suggest merge with each background station
   const getNearestActiveStation = (bgLat: number, bgLon: number) => {
     if (waypoints.length === 0) return null
 
@@ -545,7 +546,7 @@ export const RouteMap = memo(function RouteMap({
         const hasBackgroundMember = group.members.some((member) => !member.isActive)
         const activeMemberCount = group.members.filter((member) => member.isActive).length
 
-        // If a station exists on the active line, use the normal active-station marker behavior.
+        // Active markers already provide selection, dragging, and popup editing.
         if (hasActiveMember) {
           return false
         }
