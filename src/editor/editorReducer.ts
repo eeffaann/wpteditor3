@@ -224,7 +224,7 @@ export const initialEditorState: EditorState = {
   loadedRoutes: [],
   activeRouteId: null,
   history: [],
-  namingMode: 'shared',
+  namingMode: 'independent',
 }
 
 function reduceEditor(state: EditorState, action: EditorAction): EditorState {
@@ -345,7 +345,11 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
       return syncInputText(withHistory(state), waypoints)
     }
     case 'route/rename-waypoint': {
-      const waypoint = state.waypoints.find((candidate) => candidate.id === action.waypointId)
+      const targetRouteId = action.routeId ?? state.activeRouteId
+      const targetWaypoints = action.routeId
+        ? state.loadedRoutes.find((route) => route.id === action.routeId)?.waypoints
+        : state.waypoints
+      const waypoint = targetWaypoints?.find((candidate) => candidate.id === action.waypointId)
       const trimmedLabel = action.nextLabel.trim()
 
       if (!waypoint || !trimmedLabel || trimmedLabel === waypoint.label) {
@@ -374,14 +378,14 @@ function reduceEditor(state: EditorState, action: EditorAction): EditorState {
 
       const nextLoadedRoutes = previousState.loadedRoutes.map((route) => {
         const targetIndexes = route.waypoints.reduce<number[]>((indexes, candidate, index) => {
-          const isActiveEditedWaypoint = route.id === previousState.activeRouteId && candidate.id === action.waypointId
+          const isEditedWaypoint = route.id === targetRouteId && candidate.id === action.waypointId
           const isConnectedInterchange =
             previousState.namingMode === 'shared' &&
-            route.id !== previousState.activeRouteId &&
+            route.id !== targetRouteId &&
             !candidate.hidden &&
             sameCoordinate(candidate.lat, candidate.lon, waypoint.lat, waypoint.lon)
 
-          if (isActiveEditedWaypoint || isConnectedInterchange) {
+          if (isEditedWaypoint || isConnectedInterchange) {
             indexes.push(index)
           }
 

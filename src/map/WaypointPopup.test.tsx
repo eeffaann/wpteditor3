@@ -31,15 +31,70 @@ describe('waypoint popup', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Denied'))
   })
 
+  it('hides alternate-label editing by default and saves edits when hiding it', () => {
+    const props = callbacks()
+    render(<WaypointPopupContent waypoint={waypoint} issueCodes={[]} {...props} />)
+    expect(screen.queryByRole('textbox', { name: 'Alt labels' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Edit alt labels' }).getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alt labels' }))
+    const input = screen.getByRole('textbox', { name: 'Alt labels' }) as HTMLInputElement
+    expect(input.value).toBe('Alt')
+    fireEvent.change(input, { target: { value: 'Old  Older' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Hide alt labels' }))
+    expect(props.onSetAltLabels).toHaveBeenCalledWith(waypoint.id, ['Old', 'Older'])
+    expect(screen.queryByRole('textbox', { name: 'Alt labels' })).toBeNull()
+  })
+
+  it('reflects external alternate-label updates and supports clearing them with Enter', () => {
+    const props = callbacks()
+    const view = render(<WaypointPopupContent waypoint={waypoint} issueCodes={[]} {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alt labels' }))
+    const input = screen.getByRole('textbox', { name: 'Alt labels' }) as HTMLInputElement
+    view.rerender(<WaypointPopupContent waypoint={{ ...waypoint, altLabels: ['External'] }} issueCodes={[]} {...props} />)
+    expect(input.value).toBe('External')
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(props.onSetAltLabels).toHaveBeenCalledWith(waypoint.id, [])
+  })
+
+  it('edits concurrent names using the correct route and reflects external updates', () => {
+    const props = callbacks()
+    const member = { routeId: 'two', routeFilename: 'two.wpt', waypoint: { ...waypoint, id: 'other', label: 'Other' } }
+    const view = render(<WaypointPopupContent waypoint={waypoint} issueCodes={[]} {...props} concurrentWaypoints={[member]} />)
+    const input = screen.getByRole('textbox', { name: 'Waypoint label on two.wpt' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: ' Edited ' } })
+    fireEvent.blur(input)
+    expect(props.onRenameWaypoint).toHaveBeenCalledWith('other', 'Edited', 'two')
+    view.rerender(<WaypointPopupContent waypoint={waypoint} issueCodes={[]} {...props}
+      concurrentWaypoints={[{ ...member, waypoint: { ...member.waypoint, label: 'External' } }]} />)
+    expect(input.value).toBe('External')
+    fireEvent.change(input, { target: { value: 'EnterName' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(props.onRenameWaypoint).toHaveBeenLastCalledWith('other', 'EnterName', 'two')
+  })
+
+  it('does not rename a concurrent point to a blank or unchanged name', () => {
+    const props = callbacks()
+    render(<WaypointPopupContent waypoint={waypoint} issueCodes={[]} {...props}
+      concurrentWaypoints={[{ routeId: 'two', routeFilename: 'two.wpt', waypoint }]} />)
+    const input = screen.getByRole('textbox', { name: 'Waypoint label on two.wpt' })
+    fireEvent.blur(input)
+    fireEvent.change(input, { target: { value: '  ' } })
+    fireEvent.blur(input)
+    expect(props.onRenameWaypoint).not.toHaveBeenCalled()
+  })
+
   it('offers both naming directions for each concurrent station', () => {
     const props = callbacks()
     const other = { ...waypoint, id: 'other', label: 'Other' }
     render(<WaypointPopupContent waypoint={waypoint} issueCodes={[]} {...props}
       concurrentWaypoints={[{ routeId: 'two', routeFilename: 'two.wpt', waypoint: other }]} />)
     expect(screen.getByText('two.wpt')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Use Other for this point' }))
+    expect(screen.getByRole('button', { name: 'Copy From two.wpt' }).textContent).toBe('Copy From')
+    expect(screen.getByRole('button', { name: 'Copy To two.wpt' }).textContent).toBe('Copy To')
+    fireEvent.click(screen.getByRole('button', { name: 'Copy From two.wpt' }))
     expect(props.onMatchSharedName).toHaveBeenCalledWith(waypoint.id, 'two', 'other', 'use-other')
-    fireEvent.click(screen.getByRole('button', { name: 'Use Alpha on two.wpt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Copy To two.wpt' }))
     expect(props.onMatchSharedName).toHaveBeenCalledWith(waypoint.id, 'two', 'other', 'use-current')
   })
 
@@ -49,8 +104,8 @@ describe('waypoint popup', () => {
         { routeId: 'two', routeFilename: 'two.wpt', waypoint },
         { routeId: 'three', routeFilename: 'three.wpt', waypoint: { ...waypoint, hidden: true, label: '+X123456' } },
       ]} />)
-    expect((screen.getByRole('button', { name: 'Use Alpha for this point' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: 'Use Alpha on two.wpt' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Copy From two.wpt' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Copy To two.wpt' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.queryByText('three.wpt')).toBeNull()
   })
 })

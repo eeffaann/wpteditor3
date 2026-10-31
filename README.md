@@ -54,17 +54,23 @@ with diagnostics but are not rendered on the map.
 **Names at shared coordinates** controls primary names at coordinates matching to
 six decimal places:
 
-- **Shared names** (default): matches visible station names to the first loaded route;
+- **Shared names**: matches visible station names to the first loaded route;
   name edits can propagate across routes. Enabling it with routes loaded requires
   confirmation. Check all affected routes before saving.
-- **Independent names**: keeps route names separate. Switching modes does not undo
+- **Independent names** (default): keeps route names separate. Switching modes does not undo
   earlier harmonization; use Undo to revert it.
+
+Recovered workspaces retain their saved naming mode.
 
 Alternate labels stay route-specific; hidden geometry names are not harmonized.
 Shared-station dragging moves matching coordinates in either mode. Select a point
-before dragging it at least 5 pixels; smaller movements do not change coordinates.
-Station popups can match primary names between routes without changing alternate labels
-or coordinates. **Naming details** in the editor expands the naming explanation.
+before moving the mouse at least 10 pixels while holding the left button to drag it.
+Clicks, smaller movements, and mouse release alone cannot start a drag.
+Station popups hide the alternate-label editor until **Edit alt labels** is pressed.
+Concurrent route names are editable directly; **Copy From** uses that route's name on
+the current point, and **Copy To** sends the current name to that route. Name edits
+follow the shared/independent naming mode without changing alternate labels or coordinates.
+**Naming details** in the editor expands the naming explanation.
 
 Drag table rows or use their move controls to reorder waypoints. New geometry nodes
 and converted default `WP` stations receive random six-digit `+X` labels unique on the route;

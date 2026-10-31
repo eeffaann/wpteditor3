@@ -23,7 +23,7 @@ export type RouteMapProps = {
   inUseLabels: string[]
   onSelectRoute: (routeId: string) => void
   onInsertWaypoint: (hidden: boolean, lat: number, lon: number) => void
-  onRenameWaypoint: (waypointId: string, nextLabel: string) => void
+  onRenameWaypoint: (waypointId: string, nextLabel: string, routeId?: string) => void
   onMatchSharedName: (waypointId: string, routeId: string, otherWaypointId: string, direction: 'use-other' | 'use-current') => void
   onSetAltLabels: (waypointId: string, altLabels: string[]) => void
   onToggleWaypointKind: (waypointId: string) => void

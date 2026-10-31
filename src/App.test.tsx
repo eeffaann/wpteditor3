@@ -11,7 +11,12 @@ vi.mock('./map/RouteMap', () => ({
       <span data-testid="map-labels">{props.waypoints.map((waypoint) => waypoint.label).join(',')}</span>
       <span data-testid="map-fit-request">{props.fitRequest}</span>
       {props.backgroundRoutes.map((route) => (
-        <button key={route.id} onClick={() => props.onSelectRoute(route.id)}>Select {route.filename} on map</button>
+        <div key={route.id}>
+          <button onClick={() => props.onSelectRoute(route.id)}>Select {route.filename} on map</button>
+          <button onClick={() => props.onRenameWaypoint(route.waypoints[0].id, 'BackgroundRenamed', route.id)}>
+            Rename point on {route.filename}
+          </button>
+        </div>
       ))}
       <button onClick={() => props.onRenameWaypoint(props.waypoints[0].id, 'MapRenamed')}>Rename on map</button>
       <button onClick={() => props.onInsertWaypoint(true, 40.5, -75.5)}>Add geometry on map</button>
@@ -64,6 +69,18 @@ async function addFileRoute(handle: ReturnType<typeof fileHandle>) {
 }
 
 describe('editor UI integration', () => {
+  it('renames a background point from the map without changing active selection', () => {
+    render(<App />)
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'independent' } })
+    addRoute()
+    addRoute(text.replace('Alpha', 'Other'))
+    fireEvent.click(screen.getByRole('button', { name: 'Rename point on route-1.wpt' }))
+    expect(source().value).toContain('Other')
+    expect(screen.getByText('route-1.wpt (modified)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Select route-1.wpt on map' }))
+    expect(source().value).toContain('BackgroundRenamed')
+  })
+
   it('only offers draft loading before a route is active and applies later edits live', () => {
     render(<App />)
     expect(screen.getByText('Paste .wpt lines or open a route.')).toBeTruthy()
@@ -88,6 +105,7 @@ describe('editor UI integration', () => {
     render(<App />)
     const details = screen.getByText('Naming details').closest('details')!
     expect(details.open).toBe(false)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Names at shared coordinates' }), { target: { value: 'shared' } })
     expect(screen.getByText('Edits propagate across routes.')).toBeTruthy()
     expect(within(details).getByText('Visible waypoints at matching coordinates share a name. Imports use the first loaded name.')).toBeTruthy()
     fireEvent.change(screen.getByRole('combobox', { name: 'Names at shared coordinates' }), { target: { value: 'independent' } })
@@ -256,8 +274,7 @@ describe('editor UI integration', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<App />)
     const mode = screen.getByRole('combobox', { name: 'Names at shared coordinates' })
-    expect((mode as HTMLSelectElement).value).toBe('shared')
-    fireEvent.change(mode, { target: { value: 'independent' } })
+    expect((mode as HTMLSelectElement).value).toBe('independent')
     addRoute()
     addRoute(text.replace('Alpha', 'Other'))
     fireEvent.click(screen.getByRole('button', { name: /^route-1.wpt/ }))

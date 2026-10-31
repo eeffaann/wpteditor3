@@ -637,6 +637,10 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.waypoint-alt-labels-button {
+  justify-self: start;
+}
+
 .waypoint-copy-status {
   color: var(--accent-strong);
   font-size: 0.82rem;

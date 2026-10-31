@@ -7,7 +7,7 @@ export type WaypointDragStart = {
   position: [number, number]
 }
 
-const dragThreshold = 5
+const dragThreshold = 10
 
 export function WaypointDragHandler({
   start,
@@ -40,15 +40,19 @@ export function WaypointDragHandler({
 
     function positionFor(event: MouseEvent) {
       const pointer = map.mouseEventToContainerPoint(event)
-      if (pointer.distanceTo(startPointer) >= dragThreshold) {
-        hasDragged = true
-      }
       return hasDragged
         ? map.containerPointToLatLng(origin.add(pointer.subtract(startPointer)))
         : null
     }
 
     function onMouseMove(event: MouseEvent) {
+      if ((event.buttons & 1) === 0) {
+        cancel()
+        return
+      }
+      if (map.mouseEventToContainerPoint(event).distanceTo(startPointer) >= dragThreshold) {
+        hasDragged = true
+      }
       const position = positionFor(event)
       if (position) {
         preview(position.lat, position.lng)

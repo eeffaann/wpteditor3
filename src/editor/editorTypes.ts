@@ -67,7 +67,7 @@ export type EditorAction =
   | { type: 'routes/add-route'; route: LoadedRoute }
   | { type: 'routes/replace-active-route'; route: LoadedRoute }
   | { type: 'route/insert'; lat: number; lon: number; hidden: boolean; labelSeed: number }
-  | { type: 'route/rename-waypoint'; waypointId: string; nextLabel: string }
+  | { type: 'route/rename-waypoint'; waypointId: string; nextLabel: string; routeId?: string }
   | { type: 'route/match-shared-name'; waypointId: string; routeId: string; otherWaypointId: string; direction: 'use-other' | 'use-current' }
   | { type: 'route/set-alt-labels'; waypointId: string; altLabels: string[] }
   | { type: 'route/toggle-waypoint-kind'; waypointId: string; labelSeed: number }

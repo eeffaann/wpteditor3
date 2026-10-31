@@ -276,8 +276,8 @@ function EditorApp({ onNewSession }: { onNewSession: () => void }) {
     })
   }, [dispatch])
 
-  const handleRenameWaypoint = useCallback((waypointId: string, nextLabel: string) => {
-    dispatch({ type: 'route/rename-waypoint', waypointId, nextLabel })
+  const handleRenameWaypoint = useCallback((waypointId: string, nextLabel: string, routeId?: string) => {
+    dispatch({ type: 'route/rename-waypoint', waypointId, nextLabel, routeId })
   }, [dispatch])
 
   const handleMatchSharedName = useCallback<RouteMapProps['onMatchSharedName']>((waypointId, routeId, otherWaypointId, direction) => {

@@ -36,8 +36,17 @@ describe('editor state', () => {
     expect(editorReducer(typed, { type: 'history/undo' }).inputText).toBe(original.inputText)
   })
 
-  it('defaults to shared names and harmonizes imports without dropping malformed lines', () => {
-    expect(initialEditorState.namingMode).toBe('shared')
+  it('defaults to independent names', () => {
+    expect(initialEditorState.namingMode).toBe('independent')
+    const state = editorReducer(initialEditorState, {
+      type: 'routes/add-folder', routes: [route('one'), route('two', text.replace('Alpha', 'Other'))],
+    })
+    expect(state.loadedRoutes[0].waypoints[0].label).toBe('Alpha')
+    expect(state.loadedRoutes[1].waypoints[0].label).toBe('Other')
+    expect(state.loadedRoutes.every((candidate) => !isRouteModified(candidate))).toBe(true)
+  })
+
+  it('harmonizes imports in shared mode without dropping malformed lines', () => {
     const state = load()
     expect(state.loadedRoutes[1].waypoints[0].label).toBe('Alpha')
     expect(state.loadedRoutes[1].inputText).toContain('BROKEN')
@@ -62,6 +71,47 @@ describe('editor state', () => {
     expect(state.loadedRoutes.every((candidate) => candidate.waypoints[0].label === 'Shared')).toBe(true)
     expect(state.loadedRoutes.every((candidate) => candidate.inputText.includes('BROKEN'))).toBe(true)
     expect(editorReducer(state, { type: 'history/undo' }).loadedRoutes).toEqual(original.loadedRoutes)
+  })
+
+  it.each(['independent', 'shared'] as const)('renames a background point in %s mode without switching routes', (mode) => {
+    const original = editorReducer({ ...initialEditorState, namingMode: mode }, {
+      type: 'routes/add-folder',
+      routes: [
+        route('one', text.replace('Alpha', 'Alpha OldAlpha')),
+        route('two', text.replace('Alpha', 'Other OldOther')),
+        route('three', text.replace('Alpha', 'Third')),
+      ],
+    })
+    const state = editorReducer(original, {
+      type: 'route/rename-waypoint', routeId: 'two',
+      waypointId: original.loadedRoutes[1].waypoints[0].id, nextLabel: 'New Name',
+    })
+    expect(state.activeRouteId).toBe(original.activeRouteId)
+    expect(state.fitRequest).toBe(original.fitRequest)
+    expect(state.loadedRoutes[1].waypoints[0]).toMatchObject({
+      label: 'New_Name', altLabels: ['OldOther'], lat: 40, lon: -75, hidden: false,
+    })
+    if (mode === 'shared') {
+      expect(state.loadedRoutes.every((candidate) => candidate.waypoints[0].label === 'New_Name')).toBe(true)
+    } else {
+      expect(state.loadedRoutes[0]).toBe(original.loadedRoutes[0])
+      expect(state.loadedRoutes[2]).toBe(original.loadedRoutes[2])
+    }
+    expect(state.loadedRoutes.every((candidate) => candidate.inputText.includes('BROKEN'))).toBe(true)
+    expect(state.loadedRoutes.map((candidate) => candidate.waypoints[1])).toEqual(original.loadedRoutes.map((candidate) => candidate.waypoints[1]))
+    expect(isRouteModified(state.loadedRoutes[1])).toBe(true)
+    expectSynchronized(state)
+    expect(editorReducer(state, { type: 'history/undo' }).loadedRoutes).toEqual(original.loadedRoutes)
+  })
+
+  it('does not rename points on missing routes or fall back to the active route', () => {
+    const original = load()
+    expect(editorReducer(original, {
+      type: 'route/rename-waypoint', routeId: 'missing', waypointId: original.waypoints[0].id, nextLabel: 'Wrong',
+    })).toBe(original)
+    expect(editorReducer(original, {
+      type: 'route/rename-waypoint', routeId: 'two', waypointId: 'missing', nextLabel: 'Wrong',
+    })).toBe(original)
   })
 
   it('makes enabling shared mode undoable, including the previous independent names', () => {

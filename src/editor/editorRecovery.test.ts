@@ -9,6 +9,11 @@ const loaded = editorReducer(initialEditorState, { type: 'routes/add-route', rou
 const saved = { one: { filename: route.filename, inputText: text } }
 
 describe('workspace recovery and dirty tracking', () => {
+  it.each(['shared', 'independent'] as const)('preserves the saved %s naming mode instead of replacing it with the default', (mode) => {
+    const state = editorReducer(loaded, { type: 'naming/set-mode', mode })
+    expect(restoreRecovery(serializeRecovery(state, saved)).state.namingMode).toBe(mode)
+  })
+
   it('round-trips source, mode, active route, diagnostics and save baselines', () => {
     const state = editorReducer(loaded, { type: 'naming/set-mode', mode: 'independent' })
     const restored = restoreRecovery(serializeRecovery(state, saved))

@@ -45,39 +45,57 @@ describe('waypoint dragging', () => {
     expect(callbacks.onCancel).toHaveBeenCalledOnce()
   })
 
-  it('ignores motion below 5 pixels, including on release', () => {
+  it('ignores motion below 10 pixels, including on release', () => {
     const callbacks = setup()
-    fireEvent.mouseMove(document, { clientX: 107, clientY: 206 })
-    fireEvent.mouseUp(document, { clientX: 107, clientY: 206, button: 0 })
+    fireEvent.mouseMove(document, { clientX: 113, clientY: 203, buttons: 1 })
+    fireEvent.mouseUp(document, { clientX: 113, clientY: 203, button: 0 })
     expect(callbacks.onPreviewWaypoint).not.toHaveBeenCalled()
     expect(callbacks.onCommitWaypoint).not.toHaveBeenCalled()
     expect(callbacks.onCancel).toHaveBeenCalledOnce()
   })
 
-  it('starts at exactly 5 pixels and preserves the grab offset', () => {
+  it('starts at exactly 10 pixels and preserves the grab offset', () => {
     const callbacks = setup()
-    fireEvent.mouseMove(document, { clientX: 107, clientY: 207 })
-    expect(callbacks.onPreviewWaypoint).toHaveBeenCalledWith(20.4, 10.3)
+    fireEvent.mouseMove(document, { clientX: 110, clientY: 211, buttons: 1 })
+    expect(callbacks.onPreviewWaypoint).toHaveBeenCalledWith(20.8, 10.6)
     fireEvent.mouseUp(document, { clientX: 114, clientY: 213, button: 0 })
     expect(callbacks.onCommitWaypoint).toHaveBeenCalledWith(21, 11)
     expect(callbacks.onCancel).not.toHaveBeenCalled()
   })
 
-  it('recognizes a drag that first crosses the threshold on release', () => {
+  it('does not start a drag when only the release crosses the threshold', () => {
     const callbacks = setup()
-    fireEvent.mouseUp(document, { clientX: 110, clientY: 203, button: 0 })
-    expect(callbacks.onCommitWaypoint).toHaveBeenCalledWith(20, 10.6)
+    fireEvent.mouseMove(document, { clientX: 113, clientY: 203, buttons: 1 })
+    fireEvent.mouseUp(document, { clientX: 124, clientY: 203, button: 0 })
+    expect(callbacks.onPreviewWaypoint).not.toHaveBeenCalled()
+    expect(callbacks.onCommitWaypoint).not.toHaveBeenCalled()
+    expect(callbacks.onCancel).toHaveBeenCalledOnce()
+  })
+
+  it('does not move a point on a distant release without any mouse movement events', () => {
+    const callbacks = setup()
+    fireEvent.mouseUp(document, { clientX: 124, clientY: 203, button: 0 })
+    expect(callbacks.onCommitWaypoint).not.toHaveBeenCalled()
+    expect(callbacks.onCancel).toHaveBeenCalledOnce()
   })
 
   it('keeps dragging across preview rerenders even when returning inside the threshold', () => {
     const callbacks = setup()
-    fireEvent.mouseMove(document, { clientX: 114, clientY: 203 })
+    fireEvent.mouseMove(document, { clientX: 114, clientY: 203, buttons: 1 })
     const commit = vi.fn()
     callbacks.rerender(<WaypointDragHandler start={callbacks.start}
       onPreviewWaypoint={callbacks.onPreviewWaypoint} onCommitWaypoint={commit} onCancel={callbacks.onCancel} />)
     fireEvent.mouseUp(document, { clientX: 105, clientY: 203, button: 0 })
     expect(commit).toHaveBeenCalledWith(20, 10.1)
     expect(callbacks.onCommitWaypoint).not.toHaveBeenCalled()
+  })
+
+  it('cancels movement when the left button is no longer held', () => {
+    const callbacks = setup()
+    fireEvent.mouseMove(document, { clientX: 124, clientY: 203, buttons: 0 })
+    expect(callbacks.onPreviewWaypoint).not.toHaveBeenCalled()
+    expect(callbacks.onCommitWaypoint).not.toHaveBeenCalled()
+    expect(callbacks.onCancel).toHaveBeenCalledOnce()
   })
 
   it('restores map interactions and removes document listeners after finishing', () => {
